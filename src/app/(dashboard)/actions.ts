@@ -1,6 +1,30 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import bcrypt from "bcryptjs";
+import { decode } from "next-auth/jwt";
+import { cookies } from "next/headers";
+
+async function getUserId() {
+  try {
+    // En Next.js 15+ cookies() es asíncrono. Esto evita el bug de getServerSession que retorna null.
+    const cookieStore = await cookies();
+    const token = cookieStore.get("next-auth.session-token")?.value || 
+                  cookieStore.get("__Secure-next-auth.session-token")?.value;
+
+    if (!token) return null;
+
+    const decoded = await decode({
+      token,
+      secret: process.env.NEXTAUTH_SECRET as string,
+    });
+
+    return (decoded?.sub || decoded?.id) as string | undefined;
+  } catch (error) {
+    console.error("Error decoding token:", error);
+    return null;
+  }
+}
 
 /**
  * Get the latest exchange rate from the database.
@@ -20,21 +44,30 @@ export async function getLatestExchangeRate(): Promise<number> {
 
 /**
  * Get a summary of expenses for the current month.
- * Includes total spent in both currencies and transaction count.
+ * Includes total spent in both currencies, transaction count, and category breakdown.
  */
-export async function getMonthSummary(userId?: string) {
+export async function getMonthSummary() {
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado. Token inválido o expirado.");
+    }
+
     const expenses = await prisma.expense.findMany({
       where: {
-        ...(userId ? { userId } : {}),
+        userId: userId,
         date: {
           gte: startOfMonth,
           lte: endOfMonth,
         },
+      },
+      include: {
+        category: true,
       },
     });
 
@@ -42,33 +75,45 @@ export async function getMonthSummary(userId?: string) {
 
     let totalVES = 0;
     let totalUSD = 0;
+    const categoryBreakdown: Record<string, { name: string, ves: number, usd: number, color: string }> = {};
 
     for (const expense of expenses) {
-      if (expense.currency === "VES") {
-        totalVES += expense.amount;
-        totalUSD += expense.amount / expense.exchangeRate;
-      } else {
-        totalUSD += expense.amount;
-        totalVES += expense.amount * expense.exchangeRate;
+      const amountVES = expense.currency === "VES" ? expense.amount : expense.amount * expense.exchangeRate;
+      const amountUSD = expense.currency === "USD" ? expense.amount : expense.amount / expense.exchangeRate;
+
+      totalVES += amountVES;
+      totalUSD += amountUSD;
+
+      if (!categoryBreakdown[expense.categoryId]) {
+        categoryBreakdown[expense.categoryId] = {
+          name: expense.category.name,
+          ves: 0,
+          usd: 0,
+          color: expense.category.color || "#8b5cf6",
+        };
       }
+      categoryBreakdown[expense.categoryId].ves += amountVES;
+      categoryBreakdown[expense.categoryId].usd += amountUSD;
     }
 
     return {
       totalSpentVES: totalVES,
       totalSpentUSD: totalUSD,
-      balanceVES: 0 - totalVES,
+      balanceVES: 0 - totalVES, // Replace with real income if available
       balanceUSD: 0 - totalUSD,
       transactionCount: expenses.length,
+      categories: Object.values(categoryBreakdown),
       currentRate,
     };
-  } catch {
-    // Fallback when DB not connected
+  } catch (error) {
+    console.error("Error in getMonthSummary:", error);
     return {
       totalSpentVES: 0,
       totalSpentUSD: 0,
       balanceVES: 0,
       balanceUSD: 0,
       transactionCount: 0,
+      categories: [],
       currentRate: 1420.0,
     };
   }
@@ -83,10 +128,16 @@ export async function getExpensesByCategory(userId?: string) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
     const expenses = await prisma.expense.groupBy({
       by: ["categoryId"],
       where: {
-        ...(userId ? { userId } : {}),
+        userId: userId,
         date: {
           gte: startOfMonth,
           lte: endOfMonth,
@@ -109,9 +160,15 @@ export async function getExpensesByCategory(userId?: string) {
  */
 export async function getExpenses(userId?: string) {
   try {
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
     const expenses = await prisma.expense.findMany({
       where: {
-        ...(userId ? { userId } : {}),
+        userId: userId,
       },
       include: {
         category: true,
@@ -155,6 +212,12 @@ export async function getExpenses(userId?: string) {
 export async function getBudgets(userId?: string) {
   try {
     const now = new Date();
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
     const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
@@ -162,7 +225,7 @@ export async function getBudgets(userId?: string) {
     // Get budgets for the current month
     const budgets = await prisma.budget.findMany({
       where: {
-        ...(userId ? { userId } : {}),
+        userId: userId,
         month: monthStr,
       },
       include: {
@@ -173,7 +236,7 @@ export async function getBudgets(userId?: string) {
     // Get expenses for the current month
     const expenses = await prisma.expense.findMany({
       where: {
-        ...(userId ? { userId } : {}),
+        userId: userId,
         date: {
           gte: startOfMonth,
           lte: endOfMonth,
@@ -255,8 +318,14 @@ export async function getBudgets(userId?: string) {
  */
 export async function getAnalyticsSummary(userId?: string) {
   try {
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
     const expenses = await prisma.expense.findMany({
-      where: { ...(userId ? { userId } : {}) },
+      where: { userId: userId },
       include: { category: true }
     });
 
@@ -322,12 +391,18 @@ export async function getAnalyticsSummary(userId?: string) {
  */
 export async function getMonthlyEvolution(userId?: string) {
   try {
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
     const now = new Date();
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
     const expenses = await prisma.expense.findMany({
       where: {
-        ...(userId ? { userId } : {}),
+        userId: userId,
         date: { gte: sixMonthsAgo }
       },
       orderBy: { date: "asc" }
@@ -364,5 +439,43 @@ export async function getMonthlyEvolution(userId?: string) {
       { month: "Sep", ves: 16000, usd: 195 },
       { month: "Oct", ves: 21000, usd: 245 }
     ];
+  }
+}
+
+/**
+ * Register a new user.
+ */
+export async function registerUser(formData: FormData) {
+  const email = formData.get("email") as string;
+  const password = formData.get("password") as string;
+  const name = formData.get("name") as string;
+
+  if (!email || !password) {
+    return { error: "Email y contraseña son requeridos" };
+  }
+
+  try {
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    if (existingUser) {
+      return { error: "El correo ya está registrado" };
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        name,
+        role: "user"
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    return { error: "Error al registrar el usuario" };
   }
 }

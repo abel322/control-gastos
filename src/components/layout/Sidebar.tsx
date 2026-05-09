@@ -19,7 +19,7 @@ const navigation = [
   { name: "Gastos", href: "/expenses", icon: Receipt },
   { name: "Presupuestos", href: "/budgets", icon: PiggyBank },
   { name: "Analítica", href: "/analytics", icon: BarChart3 },
-  { name: "Calculadora de Inflación", href: "/inflation", icon: TrendingUp },
+  { name: "Calculadora de Inflación", href: "/inflation-calculator", icon: TrendingUp },
 ];
 
 export default function Sidebar() {
