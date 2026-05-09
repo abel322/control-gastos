@@ -2,6 +2,7 @@ import SummaryCards from "@/components/dashboard/SummaryCards";
 import ExpenseChart from "@/components/dashboard/ExpenseChart";
 import { getMonthSummary } from "./actions";
 
+export const dynamic = 'force-dynamic';
 export default async function DashboardPage() {
   const summary = await getMonthSummary();
 

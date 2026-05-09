@@ -1,16 +1,17 @@
 import { getExpenses } from "../actions";
 import { formatVES, formatUSD } from "@/lib/format";
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Download, 
+import {
+  Plus,
+  Search,
+  Filter,
+  Download,
   MoreHorizontal,
   Calendar,
   Tag,
   CreditCard,
   ArrowUpDown
 } from "lucide-react";
+export const dynamic = 'force-dynamic';
 
 export default async function ExpensesPage() {
   const expenses = await getExpenses();
@@ -110,16 +111,16 @@ export default async function ExpensesPage() {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span 
+                    <span
                       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
-                      style={{ 
-                        backgroundColor: `${expense.category.color}15`, 
-                        color: expense.category.color 
+                      style={{
+                        backgroundColor: `${expense.category.color}15`,
+                        color: expense.category.color
                       }}
                     >
-                      <span 
-                        className="h-1.5 w-1.5 rounded-full" 
-                        style={{ backgroundColor: expense.category.color }} 
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: expense.category.color }}
                       />
                       {expense.category.name}
                     </span>
