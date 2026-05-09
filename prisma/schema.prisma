@@ -1,0 +1,69 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expenses  Expense[]
+  budgets   Budget[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  icon      String?
+  color     String?
+  expenses  Expense[]
+  budgets   Budget[]
+}
+
+model Expense {
+  id               String   @id @default(cuid())
+  description      String
+  amount           Float
+  currency         String   // "VES" or "USD"
+  exchangeRate     Float
+  equivalentAmount Float
+  date             DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  categoryId       String
+  category         Category @relation(fields: [categoryId], references: [id])
+
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+}
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  rate      Float    // BCV rate (VES per USD)
+  date      DateTime @default(now())
+}
+
+model Budget {
+  id         String   @id @default(cuid())
+  month      String   // e.g., "2023-10"
+  amountVES  Float
+  amountUSD  Float
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, categoryId, month])
+}
