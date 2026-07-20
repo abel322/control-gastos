@@ -23,6 +23,7 @@ model User {
   accounts      Account[]
   sessions      Session[]
   expenses      Expense[]
+  incomes       Income[]
   budgets       Budget[]
 }
 
@@ -84,6 +85,21 @@ model Expense {
 
   categoryId       String
   category         Category @relation(fields: [categoryId], references: [id])
+
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+}
+
+model Income {
+  id               String   @id @default(cuid())
+  description      String
+  amount           Float
+  currency         String   // "VES" or "USD"
+  exchangeRate     Float
+  equivalentAmount Float
+  date             DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   userId           String
   user             User     @relation(fields: [userId], references: [id])

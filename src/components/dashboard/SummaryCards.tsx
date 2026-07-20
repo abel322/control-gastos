@@ -1,5 +1,8 @@
-import { Wallet, TrendingDown, Receipt, TrendingUp } from "lucide-react";
-import { formatVES, formatUSD } from "@/lib/format";
+"use client";
+
+import { useState, useEffect } from "react";
+import { Wallet, TrendingDown, Receipt } from "lucide-react";
+import { formatUSD } from "@/lib/format";
 
 interface SummaryCardsProps {
   balanceVES: number;
@@ -16,6 +19,56 @@ export default function SummaryCards({
   totalSpentUSD,
   transactionCount,
 }: SummaryCardsProps) {
+  const [rates, setRates] = useState<{ bcv: number; usdt: number } | null>(null);
+  const [income, setIncome] = useState<number>(150);
+
+  useEffect(() => {
+    async function fetchRates() {
+      try {
+        const response = await fetch("https://ve.dolarapi.com/v1/dolares");
+        if (!response.ok) throw new Error("Failed to fetch rates");
+        const data = await response.json();
+        
+        const oficialRate = data.find((d: any) => d.fuente === "oficial")?.promedio;
+        const paraleloRate = data.find((d: any) => d.fuente === "paralelo")?.promedio;
+        
+        if (oficialRate && paraleloRate) {
+          setRates({ bcv: oficialRate, usdt: paraleloRate });
+        }
+      } catch (error) {
+        console.error("Error fetching live rates in SummaryCards:", error);
+      }
+    }
+    fetchRates();
+
+    // Load weekly_income_usd from localStorage on mount
+    const saved = localStorage.getItem("weekly_income_usd");
+    if (saved) {
+      const val = parseFloat(saved);
+      if (!isNaN(val) && val >= 0) {
+        setIncome(val);
+      }
+    }
+  }, []);
+
+  // Determinar la tasa activa. Fallback a la tasa implícita calculada por el servidor.
+  const serverRate = balanceUSD !== 0 ? Math.abs(balanceVES / balanceUSD) : 1420.0;
+  const bcvRate = rates?.bcv ?? serverRate;
+
+  // Modifica la fórmula de la tarjeta "SALDO DEL MES":
+  // Saldo = (Ingreso Semanal) - (Total Gastado)
+  const calculatedBalanceUSD = income - totalSpentUSD;
+  const calculatedBalanceVES = calculatedBalanceUSD * bcvRate;
+  const calculatedTotalSpentVES = totalSpentUSD * bcvRate;
+
+  // Aplica el formato de moneda de Venezuela
+  const formatVESVal = (amount: number) => {
+    return amount.toLocaleString("es-VE", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
       {/* Saldo del Mes */}
@@ -26,10 +79,10 @@ export default function SummaryCards({
               Saldo del Mes
             </p>
             <p className="mt-3 text-2xl font-bold text-gray-900">
-              Bs. {formatVES(balanceVES)}
+              Bs. {formatVESVal(calculatedBalanceVES)}
             </p>
             <p className="mt-1 text-sm text-gray-500">
-              ≈ $ {formatUSD(balanceUSD)}
+              ≈ $ {formatUSD(calculatedBalanceUSD)}
             </p>
           </div>
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
@@ -47,7 +100,7 @@ export default function SummaryCards({
               Total Gastado
             </p>
             <p className="mt-3 text-2xl font-bold text-gray-900">
-              Bs. {formatVES(totalSpentVES)}
+              Bs. {formatVESVal(calculatedTotalSpentVES)}
             </p>
             <p className="mt-1 text-sm text-gray-500">
               ≈ $ {formatUSD(totalSpentUSD)}

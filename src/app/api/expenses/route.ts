@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getLatestExchangeRate } from "@/app/(dashboard)/actions";
 export const dynamic = 'force-dynamic';
 /**
  * GET /api/expenses
@@ -64,10 +65,7 @@ export async function POST(request: Request) {
     }
 
     // Get current exchange rate
-    const latestRate = await prisma.exchangeRate.findFirst({
-      orderBy: { date: "desc" },
-    });
-    const exchangeRate = latestRate?.rate ?? 1420.0;
+    const exchangeRate = await getLatestExchangeRate();
 
     // Calculate equivalent amount
     let equivalentAmount: number;

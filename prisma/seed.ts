@@ -21,6 +21,7 @@ async function main() {
     { name: "Servicios", icon: "💡", color: "#f97316" },
     { name: "Ropa", icon: "👕", color: "#14b8a6" },
     { name: "Tecnología", icon: "💻", color: "#6366f1" },
+    { name: "Iglesia", icon: "⛪", color: "#10b981" },
     { name: "Otros", icon: "📦", color: "#6b7280" },
   ];
 
