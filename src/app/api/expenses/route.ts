@@ -82,6 +82,7 @@ export async function POST(request: Request) {
         currency,
         exchangeRate,
         equivalentAmount,
+        source: "MANUAL",
         categoryId,
         userId,
         date: date ? new Date(date) : new Date(),

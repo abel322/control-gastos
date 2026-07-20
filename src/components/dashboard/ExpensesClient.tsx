@@ -21,6 +21,7 @@ import { formatVES, formatUSD } from "@/lib/format";
 import ExpenseModal from "./ExpenseModal";
 import WeeklyIncome from "./WeeklyIncome";
 import { createExpenseAction, updateExpenseAction, deleteExpenseAction } from "@/app/(dashboard)/actions";
+import clsx from "clsx";
 
 interface Category {
   id: string;
@@ -36,6 +37,7 @@ interface Expense {
   currency: string;
   exchangeRate: number;
   equivalentAmount: number;
+  source?: string;
   date: Date | string;
   category: {
     name: string;
@@ -49,12 +51,14 @@ interface ExpensesClientProps {
   initialExpenses: Expense[];
   categories: Category[];
   exchangeRate: number;
+  totalIncomeUSD: number;
 }
 
 export default function ExpensesClient({
   initialExpenses,
   categories,
   exchangeRate,
+  totalIncomeUSD,
 }: ExpensesClientProps) {
   const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -263,7 +267,7 @@ export default function ExpensesClient({
 
         {/* Weekly Income Card */}
         <div className="lg:col-span-1">
-          <WeeklyIncome bcvRate={liveBcvRate} />
+          <WeeklyIncome bcvRate={liveBcvRate} totalIncomeUSD={totalIncomeUSD} />
         </div>
       </div>
 
@@ -422,6 +426,9 @@ export default function ExpensesClient({
                       <span>Categoría</span>
                     </div>
                   </th>
+                  <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">
+                    Origen
+                  </th>
                   <th 
                     onClick={() => toggleSort("amount")}
                     className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400 text-right cursor-pointer hover:text-gray-600 select-none"
@@ -479,6 +486,16 @@ export default function ExpensesClient({
                             style={{ backgroundColor: expense.category.color || "#8b5cf6" }}
                           />
                           {expense.category.name}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={clsx(
+                          "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border tracking-wide",
+                          expense.source === "AUTOMATIC"
+                            ? "bg-sky-50 text-sky-700 border-sky-200"
+                            : "bg-gray-50 text-gray-600 border-gray-200"
+                        )}>
+                          {expense.source === "AUTOMATIC" ? "✉ Automático" : "✏ Manual"}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">

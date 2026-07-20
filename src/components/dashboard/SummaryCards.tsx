@@ -10,6 +10,8 @@ interface SummaryCardsProps {
   totalSpentVES: number;
   totalSpentUSD: number;
   transactionCount: number;
+  totalIncomeVES: number;
+  totalIncomeUSD: number;
 }
 
 export default function SummaryCards({
@@ -18,9 +20,10 @@ export default function SummaryCards({
   totalSpentVES,
   totalSpentUSD,
   transactionCount,
+  totalIncomeVES,
+  totalIncomeUSD,
 }: SummaryCardsProps) {
   const [rates, setRates] = useState<{ bcv: number; usdt: number } | null>(null);
-  const [income, setIncome] = useState<number>(150);
 
   useEffect(() => {
     async function fetchRates() {
@@ -40,15 +43,6 @@ export default function SummaryCards({
       }
     }
     fetchRates();
-
-    // Load weekly_income_usd from localStorage on mount
-    const saved = localStorage.getItem("weekly_income_usd");
-    if (saved) {
-      const val = parseFloat(saved);
-      if (!isNaN(val) && val >= 0) {
-        setIncome(val);
-      }
-    }
   }, []);
 
   // Determinar la tasa activa. Fallback a la tasa implícita calculada por el servidor.
@@ -56,8 +50,8 @@ export default function SummaryCards({
   const bcvRate = rates?.bcv ?? serverRate;
 
   // Modifica la fórmula de la tarjeta "SALDO DEL MES":
-  // Saldo = (Ingreso Semanal) - (Total Gastado)
-  const calculatedBalanceUSD = income - totalSpentUSD;
+  // Saldo = (Ingreso Base) - (Total Gastado)
+  const calculatedBalanceUSD = totalIncomeUSD - totalSpentUSD;
   const calculatedBalanceVES = calculatedBalanceUSD * bcvRate;
   const calculatedTotalSpentVES = totalSpentUSD * bcvRate;
 

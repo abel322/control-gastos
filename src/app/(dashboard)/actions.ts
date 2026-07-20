@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { decode } from "next-auth/jwt";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 
 async function getUserId() {
   try {
@@ -111,14 +112,19 @@ export async function getMonthSummary() {
       categoryBreakdown[expense.categoryId].usd += amountUSD;
     }
 
+    const totalIncomeUSD = await getTotalIncomeUSD();
+    const totalIncomeVES = totalIncomeUSD * currentRate;
+
     return {
       totalSpentVES: totalVES,
       totalSpentUSD: totalUSD,
-      balanceVES: 0 - totalVES, // Replace with real income if available
-      balanceUSD: 0 - totalUSD,
+      balanceVES: totalIncomeVES - totalVES,
+      balanceUSD: totalIncomeUSD - totalUSD,
       transactionCount: expenses.length,
       categories: Object.values(categoryBreakdown),
       currentRate,
+      totalIncomeVES,
+      totalIncomeUSD,
     };
   } catch (error) {
     console.error("Error in getMonthSummary:", error);
@@ -598,6 +604,10 @@ export async function createExpenseAction(data: {
       },
     });
 
+    revalidatePath("/");
+    revalidatePath("/expenses");
+    revalidatePath("/incomes");
+
     return { success: true, expense };
   } catch (error: any) {
     console.error("Error creating expense:", error);
@@ -627,6 +637,7 @@ export async function createExpenseAction(data: {
       currency: data.currency,
       exchangeRate: 1420.0,
       equivalentAmount: data.currency === "VES" ? data.amount / 1420.0 : data.amount * 1420.0,
+      source: "MANUAL",
       date: data.date ? new Date(data.date) : new Date(),
       categoryId: data.categoryId,
       category: {
@@ -659,6 +670,9 @@ export async function deleteExpenseAction(id: string) {
     if (deleteResult.count === 0) {
       return { error: "Gasto no encontrado o no autorizado." };
     }
+    revalidatePath("/");
+    revalidatePath("/expenses");
+    revalidatePath("/incomes");
     return { success: true };
   } catch (error: any) {
     console.error("Error deleting expense:", error);
@@ -711,6 +725,10 @@ export async function updateExpenseAction(id: string, data: {
       },
     });
 
+    revalidatePath("/");
+    revalidatePath("/expenses");
+    revalidatePath("/incomes");
+
     return { success: true, expense };
   } catch (error: any) {
     console.error("Error updating expense:", error);
@@ -725,6 +743,7 @@ export async function updateExpenseAction(id: string, data: {
         categoryId: data.categoryId,
         exchangeRate: 1420,
         equivalentAmount: data.currency === "VES" ? data.amount / 1420 : data.amount * 1420,
+        source: "MANUAL",
         date: data.date ? new Date(data.date) : new Date(),
         category: {
           name: "Categoría Actualizada",
@@ -823,6 +842,10 @@ export async function createIncomeAction(data: {
       },
     });
 
+    revalidatePath("/");
+    revalidatePath("/expenses");
+    revalidatePath("/incomes");
+
     return { success: true, income };
   } catch (error: any) {
     console.error("Error creating income:", error);
@@ -870,6 +893,10 @@ export async function updateIncomeAction(id: string, data: {
       },
     });
 
+    revalidatePath("/");
+    revalidatePath("/expenses");
+    revalidatePath("/incomes");
+
     return { success: true, income };
   } catch (error: any) {
     console.error("Error updating income:", error);
@@ -892,6 +919,9 @@ export async function deleteIncomeAction(id: string) {
     if (deleteResult.count === 0) {
       return { error: "Ingreso no encontrado o no autorizado." };
     }
+    revalidatePath("/");
+    revalidatePath("/expenses");
+    revalidatePath("/incomes");
     return { success: true };
   } catch (error: any) {
     console.error("Error deleting income:", error);

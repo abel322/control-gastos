@@ -23,6 +23,8 @@ export default async function DashboardPage() {
         totalSpentVES={summary.totalSpentVES}
         totalSpentUSD={summary.totalSpentUSD}
         transactionCount={summary.transactionCount}
+        totalIncomeVES={summary.totalIncomeVES}
+        totalIncomeUSD={summary.totalIncomeUSD}
       />
 
       {/* Expense Chart */}

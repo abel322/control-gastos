@@ -79,6 +79,7 @@ model Expense {
   currency         String   // "VES" or "USD"
   exchangeRate     Float
   equivalentAmount Float
+  source           String   @default("MANUAL") // "MANUAL" or "AUTOMATIC"
   date             DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
