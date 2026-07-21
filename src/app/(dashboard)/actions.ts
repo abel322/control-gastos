@@ -136,6 +136,8 @@ export async function getMonthSummary() {
       transactionCount: 0,
       categories: [],
       currentRate: 1420.0,
+      totalIncomeVES: 0,
+      totalIncomeUSD: 0,
     };
   }
 }
