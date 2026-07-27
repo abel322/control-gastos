@@ -20,7 +20,7 @@ const navigation = [
   { name: "Bandeja de Entrada", href: "/inbox", icon: Inbox },
   { name: "Gastos", href: "/expenses", icon: Receipt },
   { name: "Ingresos", href: "/incomes", icon: Banknote },
-  { name: "Presupuestos", href: "/budgets", icon: PiggyBank },
+  { name: "Gastos Fijos", href: "/budgets", icon: PiggyBank },
   { name: "Analítica", href: "/analytics", icon: BarChart3 },
   { name: "Calculadora de Inflación", href: "/inflation-calculator", icon: TrendingUp },
 ];

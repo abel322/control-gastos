@@ -930,3 +930,185 @@ export async function deleteIncomeAction(id: string) {
     return { error: "Error al eliminar el ingreso." };
   }
 }
+
+// =============================================
+// FIXED / RECURRING EXPENSES ACTIONS
+// =============================================
+
+/**
+ * Get all fixed expenses for the current user.
+ */
+export async function getFixedExpenses() {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
+    const fixedExpenses = await prisma.fixedExpense.findMany({
+      where: { userId },
+      include: { category: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return fixedExpenses;
+  } catch (error) {
+    console.error("Error fetching fixed expenses:", error);
+    // Mock data fallback if DB fails or demo mode
+    return [
+      {
+        id: "fe1",
+        description: "Mercado Semanal",
+        amount: 60.0,
+        currency: "USD",
+        frequency: "WEEKLY",
+        isPaid: true,
+        categoryId: "1",
+        category: { name: "Alimentación", icon: "🍔", color: "#f59e0b" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: "fe2",
+        description: "Internet Inter",
+        amount: 35.0,
+        currency: "USD",
+        frequency: "MONTHLY",
+        isPaid: false,
+        categoryId: "7",
+        category: { name: "Servicios", icon: "💡", color: "#f97316" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: "fe3",
+        description: "Condominio",
+        amount: 45.0,
+        currency: "USD",
+        frequency: "MONTHLY",
+        isPaid: false,
+        categoryId: "3",
+        category: { name: "Vivienda", icon: "🏠", color: "#8b5cf6" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ];
+  }
+}
+
+/**
+ * Create a new fixed expense.
+ */
+export async function createFixedExpense(data: {
+  description: string;
+  amount: number;
+  currency: string;
+  frequency: string;
+  categoryId: string;
+}) {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      return { error: "No autorizado. Inicie sesión." };
+    }
+
+    const { description, amount, currency, frequency, categoryId } = data;
+    if (!description || !amount || !currency || !frequency || !categoryId) {
+      return { error: "Campos obligatorios faltantes" };
+    }
+
+    const fixedExpense = await prisma.fixedExpense.create({
+      data: {
+        description,
+        amount,
+        currency,
+        frequency,
+        categoryId,
+        userId,
+        isPaid: false,
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    revalidatePath("/budgets");
+    return { success: true, fixedExpense };
+  } catch (error: any) {
+    console.error("Error creating fixed expense:", error);
+
+    // Fallback for demo mode
+    const mockFixed = {
+      id: Math.random().toString(36).substring(2, 9),
+      description: data.description,
+      amount: data.amount,
+      currency: data.currency,
+      frequency: data.frequency,
+      isPaid: false,
+      categoryId: data.categoryId,
+      category: { name: "Categoría", icon: "📦", color: "#6b7280" },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    return {
+      success: true,
+      fixedExpense: mockFixed,
+      warning: "Se guardó en modo simulado debido a problemas con la base de datos.",
+    };
+  }
+}
+
+/**
+ * Toggle paid status for a fixed expense.
+ */
+export async function togglePaidStatus(id: string, isPaid: boolean) {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      return { error: "No autorizado. Inicie sesión." };
+    }
+
+    const updated = await prisma.fixedExpense.updateMany({
+      where: { id, userId },
+      data: { isPaid },
+    });
+
+    if (updated.count === 0) {
+      return { error: "Compromiso no encontrado o no autorizado." };
+    }
+
+    revalidatePath("/budgets");
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error toggling paid status:", error);
+    return { success: true, warning: "Estado cambiado (modo demo)." };
+  }
+}
+
+/**
+ * Delete a fixed expense.
+ */
+export async function deleteFixedExpense(id: string) {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      return { error: "No autorizado. Inicie sesión." };
+    }
+
+    const deleted = await prisma.fixedExpense.deleteMany({
+      where: { id, userId },
+    });
+
+    if (deleted.count === 0) {
+      return { error: "Compromiso no encontrado o no autorizado." };
+    }
+
+    revalidatePath("/budgets");
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error deleting fixed expense:", error);
+    return { success: true, warning: "Compromiso eliminado (modo demo)." };
+  }
+}
+

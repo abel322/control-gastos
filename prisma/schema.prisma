@@ -25,6 +25,7 @@ model User {
   expenses      Expense[]
   incomes       Income[]
   budgets       Budget[]
+  fixedExpenses FixedExpense[]
 }
 
 model Account {
@@ -70,6 +71,7 @@ model Category {
   color     String?
   expenses  Expense[]
   budgets   Budget[]
+  fixedExpenses FixedExpense[]
 }
 
 model Expense {
@@ -125,4 +127,21 @@ model Budget {
   user       User     @relation(fields: [userId], references: [id])
 
   @@unique([userId, categoryId, month])
+}
+
+model FixedExpense {
+  id          String   @id @default(cuid())
+  description String
+  amount      Float
+  currency    String   // "USD" or "VES"
+  frequency   String   // "WEEKLY" or "MONTHLY"
+  isPaid      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
 }
