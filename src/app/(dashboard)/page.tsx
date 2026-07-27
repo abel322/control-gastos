@@ -1,10 +1,16 @@
 import SummaryCards from "@/components/dashboard/SummaryCards";
 import ExpenseChart from "@/components/dashboard/ExpenseChart";
-import { getMonthSummary } from "./actions";
+import PendingRemindersCard from "@/components/dashboard/PendingRemindersCard";
+import { getMonthSummary, getPendingFixedExpenses, getLatestExchangeRate } from "./actions";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
-  const summary = await getMonthSummary();
+  const [summary, pendingItems, exchangeRate] = await Promise.all([
+    getMonthSummary(),
+    getPendingFixedExpenses(),
+    getLatestExchangeRate(),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -25,6 +31,12 @@ export default async function DashboardPage() {
         transactionCount={summary.transactionCount}
         totalIncomeVES={summary.totalIncomeVES}
         totalIncomeUSD={summary.totalIncomeUSD}
+      />
+
+      {/* Pending Payment Reminders Banner */}
+      <PendingRemindersCard
+        pendingItems={pendingItems as any}
+        exchangeRate={exchangeRate}
       />
 
       {/* Expense Chart */}

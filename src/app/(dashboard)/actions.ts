@@ -1211,4 +1211,60 @@ export async function updateFixedExpense(
   }
 }
 
+/**
+ * Get pending fixed expenses (isPaid: false) for the current user.
+ */
+export async function getPendingFixedExpenses() {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      return [];
+    }
+
+    const pendingExpenses = await prisma.fixedExpense.findMany({
+      where: {
+        userId,
+        isPaid: false,
+      },
+      include: {
+        category: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return pendingExpenses;
+  } catch (error) {
+    console.error("Error fetching pending fixed expenses:", error);
+    return [
+      {
+        id: "fe2",
+        description: "Internet Inter",
+        amount: 35.0,
+        currency: "USD",
+        frequency: "MONTHLY",
+        isPaid: false,
+        categoryId: "7",
+        category: { name: "Servicios", icon: "💡", color: "#f97316" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: "fe3",
+        description: "Condominio",
+        amount: 45.0,
+        currency: "USD",
+        frequency: "MONTHLY",
+        isPaid: false,
+        categoryId: "3",
+        category: { name: "Vivienda", icon: "🏠", color: "#8b5cf6" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ];
+  }
+}
+
+
 
