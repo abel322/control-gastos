@@ -9,15 +9,16 @@ import {
   CheckCircle2,
   Clock,
   Trash2,
-  AlertCircle,
+  Pencil,
   PiggyBank,
   Check,
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
-import FixedExpenseModal from "./FixedExpenseModal";
+import FixedExpenseModal, { InitialFixedData } from "./FixedExpenseModal";
 import {
   createFixedExpense,
+  updateFixedExpense,
   togglePaidStatus,
   deleteFixedExpense,
 } from "@/app/(dashboard)/actions";
@@ -37,8 +38,8 @@ interface FixedExpenseItem {
   frequency: string; // "WEEKLY" | "MONTHLY"
   isPaid: boolean;
   categoryId: string;
-  category: Category;
-  createdAt: Date | string;
+  category?: Category;
+  createdAt?: Date | string;
 }
 
 interface FixedExpensesClientProps {
@@ -55,6 +56,7 @@ export default function FixedExpensesClient({
   const [expenses, setExpenses] = useState<FixedExpenseItem[]>(initialExpenses);
   const [activeTab, setActiveTab] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<FixedExpenseItem | null>(null);
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
 
   // Helper to convert item amount to USD and VES
@@ -79,37 +81,78 @@ export default function FixedExpensesClient({
   const activeItems = activeTab === "WEEKLY" ? weeklyItems : monthlyItems;
   const paidCount = activeItems.filter((i) => i.isPaid).length;
 
-  // Handlers
-  const handleCreate = async (data: {
+  const handleOpenCreateModal = () => {
+    setEditingItem(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (item: FixedExpenseItem) => {
+    setEditingItem(item);
+    setIsModalOpen(true);
+  };
+
+  const handleModalSubmit = async (data: {
     description: string;
     amount: number;
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
     categoryId: string;
   }) => {
-    const res = await createFixedExpense(data);
-    if (res.success && res.fixedExpense) {
-      const newCat =
-        categories.find((c) => c.id === data.categoryId) || {
-          id: data.categoryId,
-          name: "General",
-          color: "#8b5cf6",
-          icon: "📦",
+    const matchedCategory = categories.find((c) => c.id === data.categoryId);
+
+    if (editingItem) {
+      // Edit existing fixed expense
+      const res = await updateFixedExpense(editingItem.id, data);
+      if (res.success) {
+        setExpenses((prev) =>
+          prev.map((e) => {
+            if (e.id === editingItem.id) {
+              return {
+                ...e,
+                description: data.description,
+                amount: data.amount,
+                currency: data.currency,
+                frequency: data.frequency,
+                categoryId: data.categoryId,
+                category:
+                  matchedCategory ||
+                  e.category || {
+                    id: data.categoryId,
+                    name: "General",
+                    color: "#8b5cf6",
+                    icon: "📦",
+                  },
+              };
+            }
+            return e;
+          })
+        );
+      }
+    } else {
+      // Create new fixed expense
+      const res = await createFixedExpense(data);
+      if (res.success && res.fixedExpense) {
+        const newItem: FixedExpenseItem = {
+          id: res.fixedExpense.id,
+          description: res.fixedExpense.description,
+          amount: res.fixedExpense.amount,
+          currency: res.fixedExpense.currency,
+          frequency: res.fixedExpense.frequency,
+          isPaid: res.fixedExpense.isPaid,
+          categoryId: res.fixedExpense.categoryId,
+          category:
+            (res.fixedExpense as any).category ||
+            matchedCategory || {
+              id: data.categoryId,
+              name: "General",
+              color: "#8b5cf6",
+              icon: "📦",
+            },
+          createdAt: res.fixedExpense.createdAt || new Date(),
         };
 
-      const newItem: FixedExpenseItem = {
-        id: res.fixedExpense.id,
-        description: res.fixedExpense.description,
-        amount: res.fixedExpense.amount,
-        currency: res.fixedExpense.currency,
-        frequency: res.fixedExpense.frequency,
-        isPaid: res.fixedExpense.isPaid,
-        categoryId: res.fixedExpense.categoryId,
-        category: (res.fixedExpense as any).category || newCat,
-        createdAt: res.fixedExpense.createdAt || new Date(),
-      };
-
-      setExpenses((prev) => [newItem, ...prev]);
+        setExpenses((prev) => [newItem, ...prev]);
+      }
     }
   };
 
@@ -136,7 +179,6 @@ export default function FixedExpensesClient({
 
   const handleDelete = async (id: string) => {
     setIsUpdating(id);
-    // Optimistic UI delete
     const previous = [...expenses];
     setExpenses((prev) => prev.filter((e) => e.id !== id));
 
@@ -166,7 +208,7 @@ export default function FixedExpensesClient({
         </div>
 
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={handleOpenCreateModal}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-all active:scale-95 shrink-0"
         >
           <Plus className="h-4 w-4" />
@@ -189,10 +231,10 @@ export default function FixedExpensesClient({
 
           <div className="mt-4">
             <div className="text-2xl font-black text-gray-900">
-              {formatUSD(weeklyUSD)}
+              ${formatUSD(weeklyUSD)}
             </div>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ {formatVES(weeklyVES)} / semana
+              ≈ Bs. {formatVES(weeklyVES)} / semana
             </p>
           </div>
 
@@ -214,10 +256,10 @@ export default function FixedExpensesClient({
 
           <div className="mt-4">
             <div className="text-2xl font-black text-gray-900">
-              {formatUSD(monthlyUSD)}
+              ${formatUSD(monthlyUSD)}
             </div>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ {formatVES(monthlyVES)} / mes
+              ≈ Bs. {formatVES(monthlyVES)} / mes
             </p>
           </div>
 
@@ -239,10 +281,10 @@ export default function FixedExpensesClient({
 
           <div className="mt-4">
             <div className="text-2xl font-black text-primary">
-              {formatUSD(totalProjectedUSD)}
+              ${formatUSD(totalProjectedUSD)}
             </div>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              Proyectado: {formatVES(totalProjectedVES)}
+              Proyectado: Bs. {formatVES(totalProjectedVES)}
             </p>
           </div>
 
@@ -318,7 +360,7 @@ export default function FixedExpensesClient({
               Empieza agregando un nuevo gasto fijo como mercado, internet o servicios obligatorios.
             </p>
             <button
-              onClick={() => setIsModalOpen(true)}
+              onClick={handleOpenCreateModal}
               className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-gray-800 transition-all"
             >
               <Plus className="h-4 w-4" />
@@ -329,6 +371,14 @@ export default function FixedExpensesClient({
           <div className="divide-y divide-gray-100">
             {activeItems.map((item) => {
               const isPaid = item.isPaid;
+              // Resolve matching category details for correct icon and color
+              const cat =
+                categories.find((c) => c.id === item.categoryId) ||
+                item.category;
+              const catIcon = cat?.icon || "📦";
+              const catColor = cat?.color || "#8b5cf6";
+              const catName = cat?.name || "General";
+
               return (
                 <div
                   key={item.id}
@@ -361,10 +411,10 @@ export default function FixedExpensesClient({
                     <div
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white text-base shadow-xs"
                       style={{
-                        backgroundColor: item.category?.color || "#8b5cf6",
+                        backgroundColor: catColor,
                       }}
                     >
-                      {item.category?.icon || "📦"}
+                      {catIcon}
                     </div>
 
                     {/* Text Details */}
@@ -400,13 +450,13 @@ export default function FixedExpensesClient({
                         </span>
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Categoría: <span className="font-medium text-gray-700">{item.category?.name || "General"}</span>
+                        Categoría: <span className="font-medium text-gray-700">{catName}</span>
                       </p>
                     </div>
                   </div>
 
-                  {/* Right: Amount & Delete Action */}
-                  <div className="flex items-center justify-between sm:justify-end gap-6 border-t sm:border-t-0 pt-3 sm:pt-0 border-gray-100">
+                  {/* Right: Amount & Actions (Edit + Delete) */}
+                  <div className="flex items-center justify-between sm:justify-end gap-5 border-t sm:border-t-0 pt-3 sm:pt-0 border-gray-100">
                     <div className="text-left sm:text-right">
                       <div
                         className={clsx(
@@ -415,24 +465,35 @@ export default function FixedExpensesClient({
                         )}
                       >
                         {item.currency === "USD"
-                          ? formatUSD(item.amount)
-                          : formatVES(item.amount)}
+                          ? `$${formatUSD(item.amount)}`
+                          : `Bs. ${formatVES(item.amount)}`}
                       </div>
                       <p className="text-xs text-gray-400 font-medium">
                         {item.currency === "USD"
-                          ? `≈ ${formatVES(item.amount * exchangeRate)}`
-                          : `≈ ${formatUSD(item.amount / exchangeRate)}`}
+                          ? `≈ Bs. ${formatVES(item.amount * exchangeRate)}`
+                          : `≈ $${formatUSD(item.amount / exchangeRate)}`}
                       </p>
                     </div>
 
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      disabled={isUpdating === item.id}
-                      className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                      title="Eliminar compromiso"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleOpenEditModal(item)}
+                        disabled={isUpdating === item.id}
+                        className="rounded-lg p-2 text-gray-400 hover:bg-purple-50 hover:text-primary transition-colors"
+                        title="Editar compromiso"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        disabled={isUpdating === item.id}
+                        className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                        title="Eliminar compromiso"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -444,9 +505,24 @@ export default function FixedExpensesClient({
       {/* Modal */}
       <FixedExpenseModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingItem(null);
+        }}
         categories={categories}
-        onSubmit={handleCreate}
+        onSubmit={handleModalSubmit}
+        initialData={
+          editingItem
+            ? {
+                id: editingItem.id,
+                description: editingItem.description,
+                amount: editingItem.amount,
+                currency: editingItem.currency as "USD" | "VES",
+                frequency: editingItem.frequency as "WEEKLY" | "MONTHLY",
+                categoryId: editingItem.categoryId,
+              }
+            : null
+        }
       />
     </div>
   );

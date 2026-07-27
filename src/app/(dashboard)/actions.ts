@@ -1038,6 +1038,21 @@ export async function createFixedExpense(data: {
     console.error("Error creating fixed expense:", error);
 
     // Fallback for demo mode
+    const dbCategories = [
+      { id: "1", name: "Alimentación", icon: "🍔", color: "#f59e0b" },
+      { id: "2", name: "Transporte", icon: "🚗", color: "#3b82f6" },
+      { id: "3", name: "Vivienda", icon: "🏠", color: "#8b5cf6" },
+      { id: "4", name: "Salud", icon: "💊", color: "#ef4444" },
+      { id: "5", name: "Educación", icon: "📚", color: "#06b6d4" },
+      { id: "6", name: "Entretenimiento", icon: "🎬", color: "#ec4899" },
+      { id: "7", name: "Servicios", icon: "💡", color: "#f97316" },
+      { id: "8", name: "Ropa", icon: "👕", color: "#14b8a6" },
+      { id: "9", name: "Tecnología", icon: "💻", color: "#6366f1" },
+      { id: "10", name: "Iglesia", icon: "⛪", color: "#10b981" },
+      { id: "11", name: "Otros", icon: "📦", color: "#6b7280" },
+    ];
+    const matchedCat = dbCategories.find(c => c.id === data.categoryId) || dbCategories[10];
+
     const mockFixed = {
       id: Math.random().toString(36).substring(2, 9),
       description: data.description,
@@ -1046,7 +1061,7 @@ export async function createFixedExpense(data: {
       frequency: data.frequency,
       isPaid: false,
       categoryId: data.categoryId,
-      category: { name: "Categoría", icon: "📦", color: "#6b7280" },
+      category: { name: matchedCat.name, icon: matchedCat.icon, color: matchedCat.color },
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -1111,4 +1126,89 @@ export async function deleteFixedExpense(id: string) {
     return { success: true, warning: "Compromiso eliminado (modo demo)." };
   }
 }
+
+/**
+ * Update an existing fixed expense.
+ */
+export async function updateFixedExpense(
+  id: string,
+  data: {
+    description: string;
+    amount: number;
+    currency: string;
+    frequency: string;
+    categoryId: string;
+  }
+) {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      return { error: "No autorizado. Inicie sesión." };
+    }
+
+    const { description, amount, currency, frequency, categoryId } = data;
+    if (!description || !amount || !currency || !frequency || !categoryId) {
+      return { error: "Campos obligatorios faltantes" };
+    }
+
+    const existing = await prisma.fixedExpense.findMany({ where: { id, userId } });
+    if (existing.length === 0) {
+      return { error: "Compromiso no encontrado o no autorizado." };
+    }
+
+    const fixedExpense = await prisma.fixedExpense.update({
+      where: { id },
+      data: {
+        description,
+        amount,
+        currency,
+        frequency,
+        categoryId,
+      },
+      include: {
+        category: true,
+      },
+    });
+
+    revalidatePath("/budgets");
+    return { success: true, fixedExpense };
+  } catch (error: any) {
+    console.error("Error updating fixed expense:", error);
+
+    const dbCategories = [
+      { id: "1", name: "Alimentación", icon: "🍔", color: "#f59e0b" },
+      { id: "2", name: "Transporte", icon: "🚗", color: "#3b82f6" },
+      { id: "3", name: "Vivienda", icon: "🏠", color: "#8b5cf6" },
+      { id: "4", name: "Salud", icon: "💊", color: "#ef4444" },
+      { id: "5", name: "Educación", icon: "📚", color: "#06b6d4" },
+      { id: "6", name: "Entretenimiento", icon: "🎬", color: "#ec4899" },
+      { id: "7", name: "Servicios", icon: "💡", color: "#f97316" },
+      { id: "8", name: "Ropa", icon: "👕", color: "#14b8a6" },
+      { id: "9", name: "Tecnología", icon: "💻", color: "#6366f1" },
+      { id: "10", name: "Iglesia", icon: "⛪", color: "#10b981" },
+      { id: "11", name: "Otros", icon: "📦", color: "#6b7280" },
+    ];
+    const matchedCat = dbCategories.find(c => c.id === data.categoryId) || dbCategories[10];
+
+    const mockUpdated = {
+      id,
+      description: data.description,
+      amount: data.amount,
+      currency: data.currency,
+      frequency: data.frequency,
+      isPaid: false,
+      categoryId: data.categoryId,
+      category: { name: matchedCat.name, icon: matchedCat.icon, color: matchedCat.color },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    return {
+      success: true,
+      fixedExpense: mockUpdated,
+      warning: "Compromiso actualizado en modo simulado.",
+    };
+  }
+}
+
 

@@ -10,6 +10,15 @@ interface Category {
   color?: string | null;
 }
 
+export interface InitialFixedData {
+  id?: string;
+  description: string;
+  amount: number;
+  currency: "USD" | "VES";
+  frequency: "WEEKLY" | "MONTHLY";
+  categoryId: string;
+}
+
 interface FixedExpenseModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -21,6 +30,7 @@ interface FixedExpenseModalProps {
     frequency: "WEEKLY" | "MONTHLY";
     categoryId: string;
   }) => Promise<void>;
+  initialData?: InitialFixedData | null;
 }
 
 export default function FixedExpenseModal({
@@ -28,6 +38,7 @@ export default function FixedExpenseModal({
   onClose,
   categories,
   onSubmit,
+  initialData,
 }: FixedExpenseModalProps) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -41,14 +52,22 @@ export default function FixedExpenseModal({
 
   useEffect(() => {
     if (isOpen) {
-      setDescription("");
-      setAmount("");
-      setCurrency("USD");
-      setFrequency("WEEKLY");
-      setCategoryId(categories[0]?.id || "");
+      if (initialData) {
+        setDescription(initialData.description);
+        setAmount(initialData.amount.toString());
+        setCurrency(initialData.currency);
+        setFrequency(initialData.frequency);
+        setCategoryId(initialData.categoryId || categories[0]?.id || "");
+      } else {
+        setDescription("");
+        setAmount("");
+        setCurrency("USD");
+        setFrequency("WEEKLY");
+        setCategoryId(categories[0]?.id || "");
+      }
       setError(null);
     }
-  }, [isOpen, categories]);
+  }, [isOpen, categories, initialData]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -122,9 +141,13 @@ export default function FixedExpenseModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 bg-gray-50/50">
           <div>
-            <h3 className="text-lg font-bold text-gray-900">Configurar Gasto Fijo / Compromiso</h3>
+            <h3 className="text-lg font-bold text-gray-900">
+              {initialData ? "Editar Gasto Fijo / Compromiso" : "Configurar Gasto Fijo / Compromiso"}
+            </h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              Registra tus pagos recurrentes obligatorios semanales o mensuales
+              {initialData
+                ? "Modifica los detalles de este compromiso recurrente"
+                : "Registra tus pagos recurrentes obligatorios semanales o mensuales"}
             </p>
           </div>
           <button
@@ -324,7 +347,7 @@ export default function FixedExpenseModal({
                 <span>Guardando...</span>
               </>
             ) : (
-              <span>Guardar Compromiso</span>
+              <span>{initialData ? "Guardar Cambios" : "Guardar Compromiso"}</span>
             )}
           </button>
         </div>
