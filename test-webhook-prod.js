@@ -4,7 +4,7 @@ const { Pool } = require("pg");
 require("dotenv").config();
 
 async function runTest() {
-  const url = "https://control-gastos-livid.vercel.app/api/webhooks/expenses-email?email=usuario@demo.com";
+  const url = "https://control-gastos-livid.vercel.app/api/webhooks/expenses-email?email=utreraabel91@gmail.com";
   const payload = {
     subject: "Notificación de Pago Móvil",
     text: "Banesco Banco Universal informa: Pago Movil por Bs. 2.500,00 a favor de FARMATODO el 01/08/2026."
@@ -38,7 +38,7 @@ async function runTest() {
 
       // Find the user first to make sure we lookup the right expenses
       const user = await prisma.user.findUnique({
-        where: { email: "usuario@demo.com" }
+        where: { email: "utreraabel91@gmail.com" }
       });
 
       if (!user) {
