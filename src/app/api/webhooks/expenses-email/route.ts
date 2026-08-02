@@ -372,6 +372,25 @@ function parseMerchant(text: string, subject: string, senderEmail: string = ""):
   return "Pago Móvil";
 }
 
+// Helper to search all string properties of an object recursively for amount extraction
+function extractAmountFromObject(obj: any, visited = new Set<any>()): number | null {
+  if (!obj || typeof obj !== "object") return null;
+  if (visited.has(obj)) return null;
+  visited.add(obj);
+
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (typeof val === "string" && val.trim().length > 0) {
+      const parsed = parseAmount(val) || extractFallbackAmount(val);
+      if (parsed !== null && parsed > 0) return parsed;
+    } else if (typeof val === "object" && val !== null) {
+      const nested = extractAmountFromObject(val, visited);
+      if (nested !== null && nested > 0) return nested;
+    }
+  }
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -408,28 +427,69 @@ export async function POST(request: Request) {
       }
     }
 
-    // 1. Extraer el emailId de la propiedad anidada (body.data?.email_id || body.data?.id || body.email_id || body.id)
+    // 1. Extraer emailId y payload directo (Fallback directo)
     const emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
-    let rawText = (body.data?.text || body.data?.body_plain || body.text || body["body-plain"] || "").toString();
-    let rawHtml = (body.data?.html || body.data?.body_html || body.html || body["body-html"] || "").toString();
+    let rawText = (
+      body.data?.text ||
+      body.data?.html ||
+      body.data?.raw ||
+      body.text ||
+      body.html ||
+      body.raw ||
+      body.data?.body_plain ||
+      body["body-plain"] ||
+      ""
+    ).toString();
+    let rawHtml = (
+      body.data?.html ||
+      body.data?.body_html ||
+      body.html ||
+      body["body-html"] ||
+      ""
+    ).toString();
     let emailSubject = (body.data?.subject || body.subject || "").toString();
     let rawFrom = body.data?.from || body.from || body.sender || "";
 
-    // 2. Si se incluye un email_id y existe RESEND_API_KEY, consultar el contenido desde la API de Resend
+    let fetchedEmailData: any = null;
+
+    // 2. Si se incluye un email_id y existe RESEND_API_KEY, consultar con el Endpoint Inbound de Resend
     if (emailId && process.env.RESEND_API_KEY) {
-      console.log(`Webhook Expenses-Email: Obteniendo cuerpo completo de correo ID ${emailId} desde Resend API...`);
+      console.log(`Webhook Expenses-Email: Obteniendo cuerpo completo de correo ID ${emailId} desde Resend API Inbound...`);
       try {
-        const res = await fetch(`https://api.resend.com/emails/${emailId}`, {
+        let res = await fetch(`https://api.resend.com/emails/inbound/${emailId}`, {
           headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
         });
-        if (res.ok) {
-          const emailData = await res.json();
-          console.log("Resend API response keys:", Object.keys(emailData || {}));
+        if (!res.ok) {
+          res = await fetch(`https://api.resend.com/emails/received/${emailId}`, {
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+          });
+        }
+        if (!res.ok) {
+          res = await fetch(`https://api.resend.com/emails/${emailId}`, {
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+          });
+        }
 
-          const fetchedText = emailData.text || emailData.html || emailData.data?.text || emailData.data?.html || emailData.body_plain || emailData.data?.body_plain;
-          const fetchedHtml = emailData.html || emailData.data?.html || emailData.body_html || emailData.data?.body_html;
-          const fetchedSubject = emailData.subject || emailData.data?.subject;
-          const fetchedFrom = emailData.from || emailData.data?.from;
+        if (res.ok) {
+          fetchedEmailData = await res.json();
+          console.log("Resend API response keys:", Object.keys(fetchedEmailData || {}));
+
+          const fetchedText =
+            fetchedEmailData.text ||
+            fetchedEmailData.html ||
+            fetchedEmailData.raw ||
+            fetchedEmailData.data?.text ||
+            fetchedEmailData.data?.html ||
+            fetchedEmailData.data?.raw ||
+            fetchedEmailData.body_plain ||
+            fetchedEmailData.data?.body_plain;
+          const fetchedHtml =
+            fetchedEmailData.html ||
+            fetchedEmailData.data?.html ||
+            fetchedEmailData.body_html ||
+            fetchedEmailData.data?.body_html;
+          const fetchedSubject = fetchedEmailData.subject || fetchedEmailData.data?.subject;
+          const fetchedFrom = fetchedEmailData.from || fetchedEmailData.data?.from;
 
           if (fetchedText) rawText = fetchedText.toString();
           if (fetchedHtml) rawHtml = fetchedHtml.toString();
@@ -437,9 +497,11 @@ export async function POST(request: Request) {
           if (fetchedFrom) rawFrom = fetchedFrom;
         } else {
           console.warn(`Resend API fetch status ${res.status}`);
+          console.error("Inbound Fetch Falló:", { status: res.status, emailId, data: body.data });
         }
       } catch (err: any) {
         console.warn("Failed to fetch email from Resend API:", err.message);
+        console.error("Inbound Fetch Falló:", err.message);
       }
     }
 
@@ -453,13 +515,23 @@ export async function POST(request: Request) {
 
     const targetEmail = paramEmail || senderEmail;
 
-    // 3. Fallback de contenido directo y normalizar a texto plano
+    // 3. Normalización: Extraer texto plano pasando por stripHtml() si es necesario
     if (!rawText && !rawHtml) {
-      rawText = (body.data?.text || body.data?.html || body.text || body.html || "").toString();
+      rawText = (
+        body.data?.text ||
+        body.data?.html ||
+        body.data?.raw ||
+        body.text ||
+        body.html ||
+        body.raw ||
+        ""
+      ).toString();
     }
 
     let emailContent = rawText;
-    if (!emailContent && rawHtml) {
+    if (emailContent && /<[a-z][\s\S]*>/i.test(emailContent)) {
+      emailContent = stripHtml(emailContent);
+    } else if (!emailContent && rawHtml) {
       emailContent = stripHtml(rawHtml);
     } else if (rawHtml && emailContent) {
       const cleanHtmlText = stripHtml(rawHtml);
@@ -468,9 +540,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Log preventivo si el texto sigue estando vacío
     if (!emailContent || emailContent.trim() === "") {
-      console.log("PAYLOAD RECIBIDO SIN TEXTO:", JSON.stringify(body));
+      console.error("Inbound Fetch Falló:", fetchedEmailData || body.data || body);
     } else {
       console.log("Texto del correo a parsear:", emailContent.slice(0, 200));
     }
@@ -480,18 +551,38 @@ export async function POST(request: Request) {
     // 4. Extraer monto con parseAmount
     let amount = parseAmount(emailContent, rawHtml);
 
-    // Fallback: Si parseAmount no detectó el monto, intentar extracción agresiva después de "Bs", "VES", "$"
+    // Fallback: Si parseAmount no detectó el monto, intentar extracción agresiva
     if (amount === null || amount <= 0) {
       console.log("parseAmount no detectó el monto. Ejecutando extractFallbackAmount...");
       amount = extractFallbackAmount(emailContent, rawHtml);
     }
 
-    // Log: Monto detectado final
+    // Resiliencia: intentar extraer el monto de cualquier propiedad string del objeto data/body/fetchedEmailData
+    if (amount === null || amount <= 0) {
+      console.log("Intentando extraer monto de propiedades string en el objeto data/payload...");
+      amount =
+        extractAmountFromObject(body.data) ||
+        extractAmountFromObject(fetchedEmailData) ||
+        extractAmountFromObject(body);
+    }
+
     console.log("Monto detectado:", amount);
 
-    // 4. Verificación del monto (> 0)
+    const isBankEmail =
+      /bancamiga|mercantil|banco|provincial|banesco|bod|bnc|venezuela|pago|tpago/i.test(senderEmail) ||
+      /bancamiga|mercantil|banco|provincial|banesco|bod|bnc|venezuela|pago|tpago/i.test(emailSubject) ||
+      /bancamiga|mercantil|banco|provincial|banesco|bod|bnc|venezuela|pago|tpago/i.test(emailContent);
+
+    // Resiliencia final: Verificación del monto (> 0)
     if (amount === null || amount <= 0) {
-      console.error("=== NO SE PUDO PARSEAR ESTE CORREO ===", (emailContent || "").slice(0, 200));
+      console.error("Inbound Fetch Falló:", fetchedEmailData || body.data || body);
+      if (isBankEmail) {
+        console.warn("Correo proviene del banco pero no se pudo extraer el monto. Evitando romper la ejecución con error 400.");
+        return NextResponse.json(
+          { message: "Webhook bancario recibido. Sin monto detectable.", success: true },
+          { status: 200 }
+        );
+      }
       return NextResponse.json(
         { error: "No se pudo extraer el monto exacto" },
         { status: 400 }
