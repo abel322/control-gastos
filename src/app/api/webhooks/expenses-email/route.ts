@@ -210,12 +210,13 @@ function parseMerchant(text: string, subject: string): string {
     }
   }
 
-  const beneficiarioMatch = text.match(/(?:nombre\s+beneficiario|beneficiario)\s*:?\s*([^\n\r]{3,40})/i);
+  // Match Beneficiario name (only if it's a name, skipping RIF / Identification lines like V20055971)
+  const beneficiarioMatch = text.match(/(?:nombre\s+del?\s+beneficiario|beneficiario\s*:)\s*([^\n\r]+)/i);
   let beneficiario = "";
   if (beneficiarioMatch && beneficiarioMatch[1]) {
-    let rawBen = beneficiarioMatch[1].trim();
+    let rawBen = beneficiarioMatch[1].split(/[\r\n]/)[0].trim();
     rawBen = rawBen.replace(/\s+(tipo|estado|fecha|cuenta|banco)\b.*/i, "").trim();
-    // Skip raw RIFs / identification numbers like V20055971 or V-20055971
+    // Skip raw RIFs / CI / ID numbers like V20055971, V-20055971, J30012345
     if (!/^[VJEGP]-?\d+$/i.test(rawBen) && !/^\d+$/.test(rawBen) && rawBen.length >= 3) {
       beneficiario = rawBen.toUpperCase();
     }

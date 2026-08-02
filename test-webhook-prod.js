@@ -12,8 +12,8 @@ async function runTest() {
     text: `Canal: MERCANTIL APP TPAGO
 Fecha y hora de envío: 01/08/2026 09:00:05PM
 Cuenta débito: ********* 3300
-Monto: Bs. 650,00
-Número de confirmación: 02791609021
+Monto: Bs. 810,00
+Número de confirmación: 02791609023
 Concepto: PAGO MOVIL.
 Banco destino: BANCAMIGA BANCO UNIVERSAL, C.A.
 Número de celular destino: ********* 8483
@@ -52,12 +52,12 @@ Estado de la transferencia: APROBADA`
       const recentExpenses = await prisma.expense.findMany({
         where: {
           userId: user.id,
-          amount: 650.00,
+          amount: 810.00,
         },
         orderBy: { createdAt: "desc" }
       });
 
-      console.log(`\n✅ Gasto verificado exitosamente en BD con monto de 650 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
+      console.log(`\n✅ Gasto verificado exitosamente en BD con monto de 810 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
 
       await prisma.$disconnect();
       await pool.end();
