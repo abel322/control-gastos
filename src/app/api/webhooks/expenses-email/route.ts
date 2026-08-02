@@ -47,15 +47,71 @@ function cleanAndParseNumber(str: string): number | null {
   return null;
 }
 
-// Robust multi-strategy helper to extract amount from email text
-function parseAmount(text: string): number | null {
-  if (!text) return null;
+// Helper to extract amount directly from HTML tables (e.g., Mercantil, Bancamiga, etc.)
+function parseHtmlTableAmount(html: string): number | null {
+  if (!html) return null;
 
-  // Normalize non-breaking spaces and double spaces
-  const cleanText = text.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+  // Match <td> or <th> containing "Monto" or "Importe" (excluding noise words like comisión, saldo, impuesto, referencia)
+  // followed by an adjacent cell with the numeric value
+  const cellPairRegex = /<t[dh][^>]*>(?:(?!comisi|saldo|impuesto|referencia).)*?(?:monto|importe)[^<]*<\/t[dh]>\s*<t[dh][^>]*>([^<]+)<\/t[dh]>/gi;
 
-  // Strip dates (e.g. 01/08/2026 or 01-08-2026) from text when searching for amounts so dates aren't misparsed
+  let match;
+  while ((match = cellPairRegex.exec(html)) !== null) {
+    if (match[1]) {
+      const val = stripHtml(match[1]);
+      const parsed = cleanAndParseNumber(val);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  return null;
+}
+
+// Robust multi-strategy helper to extract amount from email text/HTML
+function parseAmount(text: string, html?: string): number | null {
+  if (!text && !html) return null;
+
+  // Strategy 1: Try HTML table cell extraction if HTML is provided
+  if (html) {
+    const tableAmount = parseHtmlTableAmount(html);
+    if (tableAmount !== null) return tableAmount;
+  }
+
+  const cleanText = (text || "").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+
+  // Strip dates (e.g. 01/08/2026 or 01-08-2026) so dates aren't misparsed as amounts
   const textWithoutDates = cleanText.replace(/\b\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}\b/g, " [FECHA] ");
+
+  // Strategy 2: Remove noise lines (Commission, Balance, Tax, Reference) that contain distracting numbers
+  const lines = textWithoutDates.split(/\r?\n/);
+  const filteredLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lower = line.toLowerCase();
+
+    // Ignore lines that describe commission, balance, tax, or reference numbers
+    if (
+      lower.includes("comisión") ||
+      lower.includes("comision") ||
+      lower.includes("saldo") ||
+      lower.includes("disponible") ||
+      lower.includes("impuesto") ||
+      lower.includes("igtf") ||
+      lower.includes("referencia") ||
+      lower.includes("ref.") ||
+      lower.includes("nro. ref")
+    ) {
+      // If the subsequent line is just a number (e.g. multiline table key-value), skip it too
+      if (i + 1 < lines.length && /^\s*(?:Bs\.?|VES|USD|\$)?\s*\d+[\d\.,]*\s*$/i.test(lines[i + 1])) {
+        i++;
+      }
+      continue;
+    }
+    filteredLines.push(line);
+  }
+
+  const noiseFreeText = filteredLines.join("\n");
 
   // Precise pattern for Venezuelan or standard currency amount:
   // Part 1: Formatted with thousands dots & decimal comma: 15.000,00
@@ -63,47 +119,55 @@ function parseAmount(text: string): number | null {
   // Part 3: Plain integer or comma decimal: 45000 or 45000,50 or 450,50
   const numPattern = `(\\d{1,3}(?:\\.\\d{3})*,\\d{1,2}|\\d{1,3}(?:\\.\\d{3})+|\\d+(?:,\\d{1,2})?|\\d+)`;
 
-  // Strategy 1: Specific Amount Keywords (Monto, Importe, Cantidad, Monto Total, etc.)
-  const primaryKeywordRegex = new RegExp(
-    `(?:monto\\s*\\(?\\s*(?:Bs|VES|USD|\\$)?\\s*\\)?|monto total|monto del pago|importe|cantidad del pago|cantidad)[^0-9]{0,25}?(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
+  // Strategy 3: Priority 1 - Explicit Amount Phrases ("monto de:", "por la cantidad de", "importe:", "monto:")
+  const explicitPhrasesRegex = new RegExp(
+    `(?:monto\\s*de\\s*:?|por\\s+la\\s+cantidad\\s+de|por\\s+la\\s+suma\\s+de|por\\s+un\\s+monto\\s+de|importe\\s*:?|monto\\s*del?\\s*pago\\s*:?|monto\\s*debitado\\s*:?|monto\\s*transferido\\s*:?|monto\\s*\\(?\\s*(?:Bs|VES|USD|\\$)?\\s*\\)?\\s*:?)\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
     "i"
   );
-  const primaryMatch = textWithoutDates.match(primaryKeywordRegex);
-  if (primaryMatch && primaryMatch[1]) {
-    const parsed = cleanAndParseNumber(primaryMatch[1]);
+
+  const explicitMatch = noiseFreeText.match(explicitPhrasesRegex);
+  if (explicitMatch && explicitMatch[1]) {
+    const parsed = cleanAndParseNumber(explicitMatch[1]);
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 2: Transaction Keywords (debito por, compra por, transferencia por, pago de, por la cantidad de, por un monto de)
-  const secondaryKeywordRegex = new RegExp(
-    `(?:debito por|compra de|compra por|transferencia por|pago de|pago por|por la cantidad de|por la suma de|por un monto de|por)\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
-    "i"
-  );
-  const secondaryMatch = textWithoutDates.match(secondaryKeywordRegex);
-  if (secondaryMatch && secondaryMatch[1]) {
-    const parsed = cleanAndParseNumber(secondaryMatch[1]);
+  // Also check explicit phrases on original text if noise filtering removed context
+  const explicitMatchOriginal = textWithoutDates.match(explicitPhrasesRegex);
+  if (explicitMatchOriginal && explicitMatchOriginal[1]) {
+    const parsed = cleanAndParseNumber(explicitMatchOriginal[1]);
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 3: Explicit Currency Prefix: "Bs. 15.000,00", "Bs 15000", "VES 1200,50", "$ 150"
+  // Strategy 4: Priority 2 - Generic Transaction Keywords on noise-free text
+  const transactionKeywordRegex = new RegExp(
+    `(?:debito por|compra de|compra por|transferencia por|pago de|pago por|por)\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
+    "i"
+  );
+  const transactionMatch = noiseFreeText.match(transactionKeywordRegex);
+  if (transactionMatch && transactionMatch[1]) {
+    const parsed = cleanAndParseNumber(transactionMatch[1]);
+    if (parsed !== null) return parsed;
+  }
+
+  // Strategy 5: Explicit Currency Prefix on noise-free text: "Bs. 15.000,00", "Bs 15000", "VES 1200,50", "$ 150"
   const prefixRegex = new RegExp(`(?:Bs\\.?|VES|Bs\\.S|USD|\\$)\\s*${numPattern}`, "i");
-  const prefixMatch = textWithoutDates.match(prefixRegex);
+  const prefixMatch = noiseFreeText.match(prefixRegex);
   if (prefixMatch && prefixMatch[1]) {
     const parsed = cleanAndParseNumber(prefixMatch[1]);
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 4: Explicit Currency Suffix: "15.000,00 Bs", "15000 Bs."
+  // Strategy 6: Explicit Currency Suffix on noise-free text: "15.000,00 Bs", "15000 Bs."
   const suffixRegex = new RegExp(`${numPattern}\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)`, "i");
-  const suffixMatch = textWithoutDates.match(suffixRegex);
+  const suffixMatch = noiseFreeText.match(suffixRegex);
   if (suffixMatch && suffixMatch[1]) {
     const parsed = cleanAndParseNumber(suffixMatch[1]);
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 5: Look for numbers with Venezuelan decimal comma format: e.g. "1.250,00" or "450,50" or "1500,00"
+  // Strategy 7: Fallback for numbers with Venezuelan decimal comma format: e.g. "1.250,00" or "450,50" or "1500,00"
   const commaDecimalRegex = /\b(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+,\d{1,2})\b/g;
-  const commaMatches = Array.from(textWithoutDates.matchAll(commaDecimalRegex));
+  const commaMatches = Array.from(noiseFreeText.matchAll(commaDecimalRegex));
   for (const match of commaMatches) {
     if (match[1]) {
       const parsed = cleanAndParseNumber(match[1]);
@@ -111,9 +175,9 @@ function parseAmount(text: string): number | null {
     }
   }
 
-  // Strategy 6: Look for standalone numbers with thousand dots: e.g. "15.000" or "1.500"
+  // Strategy 8: Fallback for standalone numbers with thousand dots: e.g. "15.000" or "1.500"
   const dotThousandsRegex = /\b(\d{1,3}(?:\.\d{3})+)\b/g;
-  const dotMatches = Array.from(textWithoutDates.matchAll(dotThousandsRegex));
+  const dotMatches = Array.from(noiseFreeText.matchAll(dotThousandsRegex));
   for (const match of dotMatches) {
     if (match[1]) {
       const parsed = cleanAndParseNumber(match[1]);
@@ -292,8 +356,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // 6. Parse Amount & Merchant
-    const amount = parseAmount(emailContent);
+    // 6. Parse Amount & Merchant (passing rawHtml as well for HTML table cell extraction)
+    const amount = parseAmount(emailContent, rawHtml);
     if (amount === null) {
       console.warn("Webhook Expenses-Email: Amount not found in email content", { emailContent });
       return NextResponse.json(
