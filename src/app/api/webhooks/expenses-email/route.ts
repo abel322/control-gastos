@@ -197,8 +197,8 @@ function parseMerchant(text: string, subject: string): string {
   if (bankDestinoMatch && bankDestinoMatch[1]) {
     targetBank = bankDestinoMatch[1].trim();
     // Clean up trailing terms like "BANCO UNIVERSAL", "C.A.", "S.A.", punctuation
-    targetBank = targetBank.replace(/\b(banco universal|c\.?a\.?|s\.?a\.?|banco|bca)\b/gi, " ").trim();
-    targetBank = targetBank.replace(/[\s,\.\-]+$/g, "").trim();
+    targetBank = targetBank.replace(/\b(banco\s+universal|banco|c\.?a\.?|s\.?a\.?|bca)\b/gi, "");
+    targetBank = targetBank.replace(/[^a-z0-9]/gi, " ").replace(/\s+/g, " ").trim();
   }
 
   const conceptoMatch = text.match(/concepto\s*:?\s*([^\n\r]+)/i);
