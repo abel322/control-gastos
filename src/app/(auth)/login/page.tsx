@@ -107,7 +107,7 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-sm text-gray-500">
-          ¿No tienes una cuenta?{" "}
+          ¿No tienes una cuenta registrada?{" "}
           <Link
             href="/register"
             className="font-semibold text-primary hover:text-primary-dark"
