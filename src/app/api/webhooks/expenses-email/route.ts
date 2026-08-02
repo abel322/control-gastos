@@ -27,7 +27,7 @@ function stripHtml(html: string): string {
   return clean;
 }
 
-// Helper to clean raw numeric strings (e.g. "1.500,00", "15.000", "15000,50", "45000") into floats
+// Helper to clean raw numeric strings (e.g. "1.500,00", "15.000", "15000,50", "45000", "600,00") into floats
 function cleanAndParseNumber(str: string): number | null {
   if (!str) return null;
   let s = str.trim();
@@ -100,9 +100,11 @@ function parseAmount(text: string, html?: string): number | null {
       lower.includes("igtf") ||
       lower.includes("referencia") ||
       lower.includes("ref.") ||
-      lower.includes("nro. ref")
+      lower.includes("nro. ref") ||
+      lower.includes("número de confirmación") ||
+      lower.includes("numero de confirmacion")
     ) {
-      // If the subsequent line is just a number (e.g. multiline table key-value), skip it too
+      // If the subsequent line is just a number, skip it too
       if (i + 1 < lines.length && /^\s*(?:Bs\.?|VES|USD|\$)?\s*\d+[\d\.,]*\s*$/i.test(lines[i + 1])) {
         i++;
       }
@@ -116,10 +118,10 @@ function parseAmount(text: string, html?: string): number | null {
   // Precise pattern for Venezuelan or standard currency amount:
   // Part 1: Formatted with thousands dots & decimal comma: 15.000,00
   // Part 2: Formatted with thousand dots only: 15.000 or 1.500.000
-  // Part 3: Plain integer or comma decimal: 45000 or 45000,50 or 450,50
+  // Part 3: Plain integer or comma decimal: 45000 or 45000,50 or 600,00
   const numPattern = `(\\d{1,3}(?:\\.\\d{3})*,\\d{1,2}|\\d{1,3}(?:\\.\\d{3})+|\\d+(?:,\\d{1,2})?|\\d+)`;
 
-  // Strategy 3: Priority 1 - Explicit Amount Phrases ("monto de:", "por la cantidad de", "importe:", "monto:")
+  // Strategy 3: Priority 1 - Explicit Amount Phrases ("Monto:", "Monto de:", "por la cantidad de", "importe:")
   const explicitPhrasesRegex = new RegExp(
     `(?:monto\\s*de\\s*:?|por\\s+la\\s+cantidad\\s+de|por\\s+la\\s+suma\\s+de|por\\s+un\\s+monto\\s+de|importe\\s*:?|monto\\s*del?\\s*pago\\s*:?|monto\\s*debitado\\s*:?|monto\\s*transferido\\s*:?|monto\\s*\\(?\\s*(?:Bs|VES|USD|\\$)?\\s*\\)?\\s*:?)\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
     "i"
@@ -149,7 +151,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 5: Explicit Currency Prefix on noise-free text: "Bs. 15.000,00", "Bs 15000", "VES 1200,50", "$ 150"
+  // Strategy 5: Explicit Currency Prefix on noise-free text: "Bs. 600,00", "Bs 15000", "VES 1200,50", "$ 150"
   const prefixRegex = new RegExp(`(?:Bs\\.?|VES|Bs\\.S|USD|\\$)\\s*${numPattern}`, "i");
   const prefixMatch = noiseFreeText.match(prefixRegex);
   if (prefixMatch && prefixMatch[1]) {
@@ -157,7 +159,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 6: Explicit Currency Suffix on noise-free text: "15.000,00 Bs", "15000 Bs."
+  // Strategy 6: Explicit Currency Suffix on noise-free text: "600,00 Bs", "15000 Bs."
   const suffixRegex = new RegExp(`${numPattern}\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)`, "i");
   const suffixMatch = noiseFreeText.match(suffixRegex);
   if (suffixMatch && suffixMatch[1]) {
@@ -165,7 +167,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 7: Fallback for numbers with Venezuelan decimal comma format: e.g. "1.250,00" or "450,50" or "1500,00"
+  // Strategy 7: Fallback for numbers with Venezuelan decimal comma format: e.g. "600,00" or "1.250,00" or "450,50"
   const commaDecimalRegex = /\b(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+,\d{1,2})\b/g;
   const commaMatches = Array.from(noiseFreeText.matchAll(commaDecimalRegex));
   for (const match of commaMatches) {
@@ -189,7 +191,46 @@ function parseAmount(text: string, html?: string): number | null {
 }
 
 function parseMerchant(text: string, subject: string): string {
-  // First, extract amount patterns to clean them from text
+  // 1. Specific Mercantil TPAGO key-value extraction (e.g. Banco destino, Concepto, Beneficiario)
+  const bankDestinoMatch = text.match(/banco\s+destino\s*:?\s*([^\n\r]+)/i);
+  let targetBank = "";
+  if (bankDestinoMatch && bankDestinoMatch[1]) {
+    targetBank = bankDestinoMatch[1].trim();
+    // Clean up trailing terms like "BANCO UNIVERSAL", "C.A.", "S.A."
+    targetBank = targetBank.replace(/\b(banco universal|c\.?a\.?|s\.?a\.?|banco|bca)\b/gi, "").trim();
+    targetBank = targetBank.replace(/[\,]+$/g, "").trim();
+  }
+
+  const conceptoMatch = text.match(/concepto\s*:?\s*([^\n\r]+)/i);
+  let concepto = "";
+  if (conceptoMatch && conceptoMatch[1]) {
+    concepto = conceptoMatch[1].trim().replace(/\.$/, "");
+    if (concepto.toLowerCase() === "pago movil" || concepto.toLowerCase() === "pago movil.") {
+      concepto = ""; // Generic concept, keep blank to use bank name or default
+    }
+  }
+
+  const beneficiarioMatch = text.match(/(?:nombre\s+beneficiario|beneficiario)\s*:?\s*([A-Z0-9\s#\-]{3,30})/i);
+  let beneficiario = "";
+  if (beneficiarioMatch && beneficiarioMatch[1]) {
+    const rawBen = beneficiarioMatch[1].trim();
+    // Skip RIF / Identification numbers (e.g. V20055971) unless it's an actual name
+    if (!/^[VJEG]-?\d+$/i.test(rawBen)) {
+      beneficiario = rawBen.toUpperCase();
+    }
+  }
+
+  if (beneficiario) {
+    return beneficiario;
+  }
+  if (concepto) {
+    return concepto.toUpperCase();
+  }
+  if (targetBank) {
+    return `PAGO MÓVIL MERCANTIL (${targetBank.toUpperCase()})`;
+  }
+
+  // 2. Generic Regex search for merchant/beneficiary
   const amountRegex = /(?:Bs\.?|VES|Bs\.S)?\s*\d+(?:\.\d{3})*(?:,\d{1,2})?/gi;
   let cleanedText = text.replace(amountRegex, "");
 
@@ -223,14 +264,12 @@ function parseMerchant(text: string, subject: string): string {
     }
   }
 
-  // Defaults for Mercantil / Transfer / Tpago if no specific merchant/beneficiary found
+  // 3. Defaults for Mercantil / Transfer / Tpago if no specific merchant/beneficiary found
   const combined = `${subject} ${text}`.toLowerCase();
-  if (
-    combined.includes("realizado una transferencia") ||
-    combined.includes("mercantil app tpago") ||
-    combined.includes("mercantil") ||
-    combined.includes("tpago")
-  ) {
+  if (combined.includes("tpago") || combined.includes("pago movil")) {
+    return "PAGO MÓVIL MERCANTIL";
+  }
+  if (combined.includes("mercantil")) {
     return "TRANSFERENCIA MERCANTIL";
   }
   if (combined.includes("transferencia")) {

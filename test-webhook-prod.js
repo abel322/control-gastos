@@ -6,27 +6,24 @@ require("dotenv").config();
 async function runTest() {
   const url = "https://control-gastos-livid.vercel.app/api/webhooks/expenses-email?email=utreraabel91@gmail.com";
   
-  // Simulated Mercantil Email with noisy numbers: Commission (1,00 Bs), Saldo (45.000,00 Bs), Reference (987654321), and actual Amount (2.500,00 Bs)
+  // Exact Mercantil APP TPAGO email text format provided by user
   const payload = {
-    subject: "Notificación de Transferencia Mercantil",
-    html: `
-      <div>
-        <h2>Mercantil Banco Universal</h2>
-        <p>Estimado Cliente, su operación ha sido procesada.</p>
-        <table>
-          <tr><td>Número de Referencia:</td><td>987654321</td></tr>
-          <tr><td>Comisión:</td><td>Bs. 1,00</td></tr>
-          <tr><td>Impuesto IGTF:</td><td>Bs. 15,00</td></tr>
-          <tr><td>Saldo disponible:</td><td>Bs. 45.000,00</td></tr>
-          <tr><td>Monto de la Operación:</td><td>Bs. 2.500,00</td></tr>
-          <tr><td>Beneficiario:</td><td>FARMACIA LAS MERCEDES</td></tr>
-        </table>
-      </div>
-    `,
-    text: "Mercantil Banco Universal\nReferencia: 987654321\nComisión: Bs. 1,00\nImpuesto IGTF: Bs. 15,00\nSaldo disponible: Bs. 45.000,00\nMonto de la Operación: Bs. 2.500,00\nA favor de FARMACIA LAS MERCEDES"
+    subject: "Notificación de Transferencia - Mercantil",
+    text: `Canal: MERCANTIL APP TPAGO
+Fecha y hora de envío: 01/08/2026 09:00:05PM
+Cuenta débito: ********* 3300
+Monto: Bs. 600,00
+Número de confirmación: 02791609020
+Concepto: PAGO MOVIL.
+Banco destino: BANCAMIGA BANCO UNIVERSAL, C.A.
+Número de celular destino: ********* 8483
+Número de identificación Beneficiario: V20055971
+Tipo de transferencia: INMEDIATA
+Estado de la transferencia: APROBADA`
   };
 
-  console.log("1. Enviando correo con ruido (comisión, saldo, impuesto, referencia) y monto real (2.500,00 Bs):", url);
+  console.log("1. Enviando petición POST a Vercel con estructura exacta de Mercantil APP TPAGO:", url);
+  console.log("Cuerpo:", JSON.stringify(payload, null, 2));
 
   try {
     const response = await fetch(url, {
@@ -55,13 +52,12 @@ async function runTest() {
       const recentExpenses = await prisma.expense.findMany({
         where: {
           userId: user.id,
-          amount: 2500,
-          description: { contains: "FARMACIA LAS MERCEDES" }
+          amount: 600.00,
         },
         orderBy: { createdAt: "desc" }
       });
 
-      console.log(`\n✅ Gasto verificado en BD con monto EXACTO de 2500 Bs (ignoró comisión 1,00 y saldo 45000):`, JSON.stringify(recentExpenses[0], null, 2));
+      console.log(`\n✅ Gasto verificado exitosamente en BD con monto de 600 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
 
       await prisma.$disconnect();
       await pool.end();
