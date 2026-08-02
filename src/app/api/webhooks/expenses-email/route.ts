@@ -32,24 +32,29 @@ function parseAmount(text: string): number | null {
   if (!text) return null;
 
   // Amount formats in Venezuelan bank emails:
-  // "Bs. 1.234,56", "Monto: 1.234,56", "Bs.1234,56", "por la cantidad de Bs. 1.234,56", "1.234,56 Bs", etc.
+  // "Bs. 1.234,56", "Bs. 15.000", "por Bs. 15000", "Monto: 1.234,56", "Bs.1234,56", "15000 Bs", etc.
   const amountRegexes = [
-    // 1. Keyword followed by optional currency and amount with thousands (.) and decimal (,)
-    /(?:monto|importe|cantidad|debito por|compra de|transferencia por|pago de|por la cantidad de|por|monto de):?\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i,
-    // 2. Currency symbol prefix (Bs. 1.250,00 or Bs.1.250,00 or VES 1.250,00)
-    /(?:Bs\.?|VES|Bs\.S)\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i,
-    // 3. Amount followed by currency suffix (1.250,00 Bs. or 1250,00 Bs)
-    /(\d{1,3}(?:\.\d{3})*(?:,\d{2}))\s*(?:Bs\.?|VES|Bs\.S)/i,
-    // 4. "Monto: 1250,00" or "Importe: 1250,00"
-    /(?:monto|importe|cantidad):?\s*(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{2}))/i,
-    // 5. Plain number with comma decimal format: 1250,00 or 450,50
-    /\b(\d{1,3}(?:\.\d{3})*,\d{2})\b/,
+    // 1. Keyword followed by optional currency and amount (optional thousand dots and optional decimal comma)
+    /(?:monto|importe|cantidad|debito por|compra de|transferencia por|pago de|por la cantidad de|por|monto de):?\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/i,
+    // 2. Currency symbol prefix (Bs. 15.000,00 or Bs. 15000 or Bs.15.000)
+    /(?:Bs\.?|VES|Bs\.S)\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/i,
+    // 3. Amount followed by currency suffix (15.000,00 Bs. or 15000 Bs)
+    /(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:Bs\.?|VES|Bs\.S)/i,
+    // 4. "Monto: 15000" or "Importe: 15.000"
+    /(?:monto|importe|cantidad):?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/i,
+    // 5. Plain number with optional decimal comma: 1250,00 or 450,50
+    /\b(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\b/,
   ];
 
   for (const regex of amountRegexes) {
     const match = text.match(regex);
     if (match && match[1]) {
-      const cleanVal = match[1].replace(/\./g, "").replace(",", ".");
+      let cleanVal = match[1];
+      if (cleanVal.includes(",")) {
+        cleanVal = cleanVal.replace(/\./g, "").replace(",", ".");
+      } else if (/^\d{1,3}(\.\d{3})+$/.test(cleanVal)) {
+        cleanVal = cleanVal.replace(/\./g, "");
+      }
       const parsed = parseFloat(cleanVal);
       if (!isNaN(parsed) && parsed > 0) {
         return parsed;
@@ -78,7 +83,7 @@ function parseAmount(text: string): number | null {
 
 function parseMerchant(text: string, subject: string): string {
   // First, extract amount patterns to clean them from text
-  const amountRegex = /(?:Bs\.?|VES|Bs\.S)?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?/gi;
+  const amountRegex = /(?:Bs\.?|VES|Bs\.S)?\s*\d+(?:\.\d{3})*(?:,\d{1,2})?/gi;
   let cleanedText = text.replace(amountRegex, "");
 
   const merchantRegexes = [
@@ -113,10 +118,12 @@ function parseMerchant(text: string, subject: string): string {
 
   // Defaults for Mercantil / Transfer / Tpago if no specific merchant/beneficiary found
   const combined = `${subject} ${text}`.toLowerCase();
-  if (combined.includes("tpago")) {
-    return "MERCANTIL TPAGO";
-  }
-  if (combined.includes("mercantil")) {
+  if (
+    combined.includes("realizado una transferencia") ||
+    combined.includes("mercantil app tpago") ||
+    combined.includes("mercantil") ||
+    combined.includes("tpago")
+  ) {
     return "TRANSFERENCIA MERCANTIL";
   }
   if (combined.includes("transferencia")) {
