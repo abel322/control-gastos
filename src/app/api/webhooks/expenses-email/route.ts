@@ -113,7 +113,9 @@ function parseAmount(text: string, html?: string): number | null {
     if (tableAmount !== null) return tableAmount;
   }
 
-  const cleanText = (text || "").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+  // Replace non-breaking spaces with standard spaces
+  const cleanText = (text || "").replace(/\u00a0/g, " ");
+  // Strip dates (e.g. 01/08/2026 or 01-08-2026) so dates aren't misparsed as amounts
   const textWithoutDates = cleanText.replace(/\b\d{1,4}[\/\.-]\d{1,2}[\/\.-]\d{1,4}\b/g, " [FECHA] ");
 
   // Strategy 2: Remove noise lines (Comisión, Saldo, Impuesto, IGTF, Referencia, Disponible)
@@ -147,14 +149,15 @@ function parseAmount(text: string, html?: string): number | null {
 
   const noiseFreeText = filteredLines.join("\n");
 
-  // Regex pattern matching Venezuelan numeric format:
-  // Part 1: 15.000,00 or 1.500.000,50
-  // Part 2: 15.000 or 1.500.000
-  // Part 3: 45000,50 or 45000 or 600,00
-  const numPattern = `(\\d{1,3}(?:\\.\\d{3})*,\\d{1,2}|\\d{1,3}(?:\\.\\d{3})+|\\d+,\\d{1,2}|\\d+)`;
+  // Flexible numeric format pattern:
+  // Part 1: Formatted thousands & optional decimals: 1.500,00 or 1.500
+  // Part 2: Formatted with thousand dots only: 15.000 or 1.500.000
+  // Part 3: Plain integer or comma decimal: 45000,50 or 45000 or 600,00 or 600
+  const numPattern = `(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?|\\d{1,3}(?:\\.\\d{3})+|\\d+(?:,\\d{1,2})?|\\d+)`;
 
   // Strategy 3: Explicit Amount Phrases (e.g., "Monto:", "Monto de la operación:", "Importe:", "Monto debitado:", etc.)
-  // Explicit with currency prefix: "Monto: Bs. 1.500,00", "Monto de la operación: Bs. 350,00", "Importe: Bs. 200,00"
+  // Matches flexible spaces, newlines, optional colon, optional currency symbol, optional decimals:
+  // e.g. "Monto: Bs. 600,00", "Monto:Bs.600,00", "Monto: \n Bs. 600,00", "Monto: Bs. 600"
   const explicitPrefixRegex = new RegExp(
     `(?:monto\\s*(?:de\\s*la\\s*operaci[oó]n|debitado|transferido|del?\\s*pago|de\\s*la\\s*transferencia|de)?|importe|por\\s+la\\s+cantidad\\s+de|por\\s+la\\s+suma\\s+de|por\\s+un\\s+monto\\s+de|monto\\s*\\(?\\s*(?:Bs|VES|USD|\\$)?\\s*\\)?)\\s*:?\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
     "i"
@@ -166,7 +169,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Explicit with currency suffix: "Monto: 1.500,00 Bs.", "Monto de la operación: 350,00 Bs.", "Importe: 200,00 Bs."
+  // Explicit with currency suffix: "Monto: 1.500,00 Bs.", "Monto: 600 Bs."
   const explicitSuffixRegex = new RegExp(
     `(?:monto\\s*(?:de\\s*la\\s*operaci[oó]n|debitado|transferido|del?\\s*pago|de\\s*la\\s*transferencia|de)?|importe|monto\\s*\\(?\\s*(?:Bs|VES|USD|\\$)?\\s*\\)?)\\s*:?\\s*${numPattern}\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?`,
     "i"
@@ -189,7 +192,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 5: Explicit Currency Prefix on noise-free text: "Bs. 600,00", "Bs 15000", "VES 1200,50", "$ 150"
+  // Strategy 5: Explicit Currency Prefix: "Bs. 600,00", "Bs. 600", "Bs 15000", "VES 1200,50", "$ 150"
   const prefixRegex = new RegExp(`(?:Bs\\.?|VES|Bs\\.S|USD|\\$)\\s*${numPattern}`, "i");
   match = noiseFreeText.match(prefixRegex);
   if (match && match[1]) {
@@ -197,7 +200,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 6: Explicit Currency Suffix on noise-free text: "600,00 Bs", "15000 Bs."
+  // Strategy 6: Explicit Currency Suffix: "600,00 Bs", "600 Bs."
   const suffixRegex = new RegExp(`${numPattern}\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)`, "i");
   match = noiseFreeText.match(suffixRegex);
   if (match && match[1]) {
@@ -205,13 +208,59 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 7: Fallback for numbers with Venezuelan decimal comma format: e.g. "600,00" or "1.250,00" or "450,50" in noise-free text
+  // Strategy 7: Fallback for numbers with Venezuelan decimal comma format: e.g. "600,00" or "1.250,00"
   const commaDecimalRegex = /\b(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+,\d{1,2})\b/g;
   const commaMatches = Array.from(noiseFreeText.matchAll(commaDecimalRegex));
   for (const m of commaMatches) {
     if (m[1]) {
       const parsed = cleanAndParseNumber(m[1]);
       if (parsed !== null) return parsed;
+    }
+  }
+
+  return null;
+}
+
+// Aggressive Fallback to extract any valid numeric amount after currency indicators (Bs, Bs., VES, USD, $)
+function extractFallbackAmount(text: string, html?: string): number | null {
+  const fullContent = `${text || ""} ${stripHtml(html || "")}`;
+  const cleanContent = fullContent.replace(/\u00a0/g, " ");
+
+  // Strip dates so dates aren't misparsed as amounts
+  const textWithoutDates = cleanContent.replace(/\b\d{1,4}[\/\.-]\d{1,2}[\/\.-]\d{1,4}\b/g, " ");
+
+  // 1. Check numbers directly following currency symbols/words: "Bs. 600,00", "Bs 600", "Bs:\n600,00", "Bs. 1.500", "VES 50,00", "$ 15.00"
+  const prefixRegex = /(?:Bs\.?|VES|Bs\\.S|USD|\$)\s*:?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?|\d+)/gi;
+
+  let match;
+  while ((match = prefixRegex.exec(textWithoutDates)) !== null) {
+    if (match[1]) {
+      const parsed = cleanAndParseNumber(match[1]);
+      if (parsed !== null && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  // 2. Check numbers followed by currency symbols/words: "600,00 Bs.", "600 Bs"
+  const suffixRegex = /(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?|\d+)\s*(?:Bs\.?|VES|Bs\\.S|USD|\$)/gi;
+  while ((match = suffixRegex.exec(textWithoutDates)) !== null) {
+    if (match[1]) {
+      const parsed = cleanAndParseNumber(match[1]);
+      if (parsed !== null && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  // 3. Last resort: match any standalone number with Venezuelan decimal comma (e.g. 600,00 or 1.250,50)
+  const commaRegex = /\b(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+,\d{1,2})\b/g;
+  while ((match = commaRegex.exec(textWithoutDates)) !== null) {
+    if (match[1]) {
+      const parsed = cleanAndParseNumber(match[1]);
+      if (parsed !== null && parsed > 0 && (parsed < 2020 || parsed > 2030)) {
+        return parsed;
+      }
     }
   }
 
@@ -414,13 +463,19 @@ export async function POST(request: Request) {
 
     const combinedStr = `${senderEmail} ${emailSubject} ${emailContent}`.toLowerCase();
 
-    // 3. Extraer monto estrictamente
-    const amount = parseAmount(emailContent, rawHtml);
+    // 3. Extraer monto con parseAmount
+    let amount = parseAmount(emailContent, rawHtml);
 
-    // Log: Monto detectado
+    // Fallback: Si parseAmount no detectó el monto, intentar extracción agresiva después de "Bs", "VES", "$"
+    if (amount === null || amount <= 0) {
+      console.log("parseAmount no detectó el monto. Ejecutando extractFallbackAmount...");
+      amount = extractFallbackAmount(emailContent, rawHtml);
+    }
+
+    // Log: Monto detectado final
     console.log("Monto detectado:", amount);
 
-    // 4. Verificación estricta del monto (> 0)
+    // 4. Verificación del monto (> 0)
     if (amount === null || amount <= 0) {
       console.error("=== NO SE PUDO PARSEAR ESTE CORREO ===", (emailContent || "").slice(0, 200));
       return NextResponse.json(
