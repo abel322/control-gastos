@@ -2,6 +2,31 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getLatestExchangeRate } from "@/app/(dashboard)/actions";
 
+// Helper to strip HTML tags and decode HTML entities into clean plain text
+function stripHtml(html: string): string {
+  if (!html) return "";
+  let clean = html;
+  // Remove script and style tags with their contents
+  clean = clean.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ");
+  clean = clean.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ");
+  // Replace block element tags and line breaks with line breaks
+  clean = clean.replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n");
+  clean = clean.replace(/<br\s*\/?>/gi, "\n");
+  // Remove all other HTML tags
+  clean = clean.replace(/<[^>]+>/g, " ");
+  // Decode common HTML entities
+  clean = clean
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+  // Normalize whitespace
+  clean = clean.replace(/[ \t]+/g, " ").replace(/\n\s*\n/g, "\n").trim();
+  return clean;
+}
+
 // Helpers to extract information from email
 function parseAmount(text: string): number | null {
   // Typical Venezuelan amounts look like: Bs. 1.250,00 or Bs. 450,50 or Bs 1200
@@ -97,6 +122,9 @@ export async function POST(request: Request) {
         subject: formData.get("subject"),
         text: formData.get("body-plain") || formData.get("text"),
         html: formData.get("body-html") || formData.get("html"),
+        data: {
+          email_id: formData.get("email_id") || formData.get("id"),
+        }
       };
     } else {
       // Fallback text parsing if raw format
@@ -104,14 +132,66 @@ export async function POST(request: Request) {
       body = { text: rawText };
     }
 
-    const emailContent = (body.text || body.html || "").toString();
-    const emailSubject = (body.subject || "").toString();
+    // 1. Audit logs
+    console.log("Webhook Expenses-Email body keys:", Object.keys(body || {}));
+    if (body?.data && typeof body.data === "object") {
+      console.log("Webhook Expenses-Email body.data keys:", Object.keys(body.data));
+    }
 
-    // 1. Identify User
+    // 2. Extract payload fields (checking Resend structure: body.data vs body)
+    let rawText = (body.data?.text || body.data?.body_plain || body.text || body["body-plain"] || "").toString();
+    let rawHtml = (body.data?.html || body.data?.body_html || body.html || body["body-html"] || "").toString();
+    let emailSubject = (body.data?.subject || body.subject || "").toString();
+    let rawFrom = body.data?.from || body.from || body.sender || "";
+    let emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
+
+    // 3. Fallback: Fetch full email from Resend API if body content is missing but ID is present
+    if (!rawText && !rawHtml && emailId && process.env.RESEND_API_KEY) {
+      console.log(`Webhook Expenses-Email: Text/HTML missing. Fetching email ID ${emailId} from Resend API...`);
+      try {
+        let res = await fetch(`https://api.resend.com/emails/${emailId}`, {
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+        });
+        if (!res.ok) {
+          res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+          });
+        }
+        if (res.ok) {
+          const fetchedData = await res.json();
+          rawText = fetchedData.text || rawText;
+          rawHtml = fetchedData.html || rawHtml;
+          emailSubject = emailSubject || fetchedData.subject || "";
+          rawFrom = rawFrom || fetchedData.from || "";
+        } else {
+          console.warn(`Resend API fetch returned status ${res.status}`);
+        }
+      } catch (err: any) {
+        console.warn("Failed to fetch email from Resend API:", err.message);
+      }
+    }
+
+    // 4. Normalize and clean HTML content into plain text
+    let emailContent = rawText;
+    if (!emailContent && rawHtml) {
+      emailContent = stripHtml(rawHtml);
+    } else if (rawHtml && emailContent) {
+      // If both exist, combine stripped HTML as additional fallback text if text is very short
+      const cleanHtmlText = stripHtml(rawHtml);
+      if (cleanHtmlText.length > emailContent.length) {
+        emailContent = cleanHtmlText;
+      }
+    }
+
+    // Audit log: first 200 characters of emailContent
+    console.log("Webhook Expenses-Email emailContent snippet (first 200 chars):", emailContent.slice(0, 200));
+
+    // 5. Identify User
     let senderEmail = "";
-    if (body.from) {
-      const match = body.from.toString().match(/<([^>]+)>/);
-      senderEmail = match ? match[1] : body.from.toString().trim();
+    const fromStr = Array.isArray(rawFrom) ? rawFrom[0] || "" : rawFrom.toString();
+    if (fromStr) {
+      const match = fromStr.match(/<([^>]+)>/);
+      senderEmail = match ? match[1] : fromStr.trim();
     }
 
     const targetEmail = paramEmail || senderEmail;
@@ -125,14 +205,14 @@ export async function POST(request: Request) {
     }
 
     if (!user) {
-      console.warn("Webhook Expenses-Email: User not found", { paramUserId, targetEmail });
+      console.warn("Webhook Expenses-Email: User not found", { paramUserId, targetEmail, senderEmail });
       return NextResponse.json(
         { error: "Usuario no encontrado para registrar el gasto." },
         { status: 404 }
       );
     }
 
-    // 2. Parse Amount & Merchant
+    // 6. Parse Amount & Merchant
     const amount = parseAmount(emailContent);
     if (amount === null) {
       console.warn("Webhook Expenses-Email: Amount not found in email content", { emailContent });
@@ -144,11 +224,11 @@ export async function POST(request: Request) {
 
     const merchant = parseMerchant(emailContent, emailSubject);
 
-    // 3. Get Exchange Rate & Calculate Equivalent Amount
+    // 7. Get Exchange Rate & Calculate Equivalent Amount
     const exchangeRate = await getLatestExchangeRate();
     const equivalentAmount = amount / exchangeRate; // Since bank emails are in VES
 
-    // 4. Find Category
+    // 8. Find Category
     let category = await prisma.category.findUnique({
       where: { name: "Otros" },
     });
@@ -161,7 +241,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 5. Create Expense in database
+    // 9. Create Expense in database
     const expense = await prisma.expense.create({
       data: {
         description: merchant,
