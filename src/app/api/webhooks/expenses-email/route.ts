@@ -57,10 +57,11 @@ function parseAmount(text: string): number | null {
   // Strip dates (e.g. 01/08/2026 or 01-08-2026) from text when searching for amounts so dates aren't misparsed
   const textWithoutDates = cleanText.replace(/\b\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}\b/g, " [FECHA] ");
 
-  // Pattern for Venezuelan or standard currency amount:
-  // Option A: dots for thousands (requires at least one .XXX): \d{1,3}(?:\.\d{3})+(?:,\d{1,2})?
-  // Option B: plain integer or comma decimal: \d+(?:,\d{1,2})?
-  const numPattern = `(\\d{1,3}(?:\\.\\d{3})+(?:,\\d{1,2})?|\\d+(?:,\\d{1,2})?)`;
+  // Precise pattern for Venezuelan or standard currency amount:
+  // Part 1: Formatted with thousands dots & decimal comma: 15.000,00
+  // Part 2: Formatted with thousand dots only: 15.000 or 1.500.000
+  // Part 3: Plain integer or comma decimal: 45000 or 45000,50 or 450,50
+  const numPattern = `(\\d{1,3}(?:\\.\\d{3})*,\\d{1,2}|\\d{1,3}(?:\\.\\d{3})+|\\d+(?:,\\d{1,2})?|\\d+)`;
 
   // Strategy 1: Specific Amount Keywords (Monto, Importe, Cantidad, Monto Total, etc.)
   const primaryKeywordRegex = new RegExp(
