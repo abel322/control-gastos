@@ -196,9 +196,9 @@ function parseMerchant(text: string, subject: string): string {
   let targetBank = "";
   if (bankDestinoMatch && bankDestinoMatch[1]) {
     targetBank = bankDestinoMatch[1].trim();
-    // Clean up trailing terms like "BANCO UNIVERSAL", "C.A.", "S.A."
-    targetBank = targetBank.replace(/\b(banco universal|c\.?a\.?|s\.?a\.?|banco|bca)\b/gi, "").trim();
-    targetBank = targetBank.replace(/[\,]+$/g, "").trim();
+    // Clean up trailing terms like "BANCO UNIVERSAL", "C.A.", "S.A.", punctuation
+    targetBank = targetBank.replace(/\b(banco universal|c\.?a\.?|s\.?a\.?|banco|bca)\b/gi, " ").trim();
+    targetBank = targetBank.replace(/[\s,\.\-]+$/g, "").trim();
   }
 
   const conceptoMatch = text.match(/concepto\s*:?\s*([^\n\r]+)/i);
@@ -216,7 +216,7 @@ function parseMerchant(text: string, subject: string): string {
   if (beneficiarioMatch && beneficiarioMatch[1]) {
     let rawBen = beneficiarioMatch[1].split(/[\r\n]/)[0].trim();
     rawBen = rawBen.replace(/\s+(tipo|estado|fecha|cuenta|banco)\b.*/i, "").trim();
-    // Skip raw RIFs / CI / ID numbers like V20055971, V-20055971, J30012345
+    // Skip raw RIFs / CI / ID numbers like V20055971, V-20055971
     if (!/^[VJEGP]-?\d+$/i.test(rawBen) && !/^\d+$/.test(rawBen) && rawBen.length >= 3) {
       beneficiario = rawBen.toUpperCase();
     }
