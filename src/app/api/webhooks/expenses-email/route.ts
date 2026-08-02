@@ -190,33 +190,36 @@ function parseAmount(text: string, html?: string): number | null {
   return null;
 }
 
-function parseMerchant(text: string, subject: string): string {
-  // 1. Specific Mercantil TPAGO key-value extraction (e.g. Banco destino, Concepto, Beneficiario)
+function parseMerchant(text: string, subject: string, senderEmail: string = ""): string {
+  const combined = `${subject} ${text} ${senderEmail}`.toLowerCase();
+  const isBancamiga = combined.includes("bancamiga") || senderEmail.toLowerCase().includes("bancamiga");
+  const isMercantil = combined.includes("mercantil") || senderEmail.toLowerCase().includes("mercantil");
+
+  // 1. Specific Mercantil / Bancamiga key-value extraction (e.g. Banco destino, Concepto, Beneficiario, Comercio)
   const bankDestinoMatch = text.match(/banco\s+destino\s*:?\s*([^\n\r]+)/i);
   let targetBank = "";
   if (bankDestinoMatch && bankDestinoMatch[1]) {
     targetBank = bankDestinoMatch[1].trim();
-    // Clean up trailing terms like "BANCO UNIVERSAL", "C.A.", "S.A.", punctuation
     targetBank = targetBank.replace(/\b(banco\s+universal|banco|c\.?a\.?|s\.?a\.?|bca)\b/gi, "");
     targetBank = targetBank.replace(/[^a-z0-9]/gi, " ").replace(/\s+/g, " ").trim();
   }
 
-  const conceptoMatch = text.match(/concepto\s*:?\s*([^\n\r]+)/i);
+  const conceptoMatch = text.match(/(?:concepto|motivo|descripci[oó]n)\s*:?\s*([^\n\r]+)/i);
   let concepto = "";
   if (conceptoMatch && conceptoMatch[1]) {
     concepto = conceptoMatch[1].trim().replace(/\.$/, "");
-    if (concepto.toLowerCase() === "pago movil" || concepto.toLowerCase() === "pago movil.") {
+    const lowerConcepto = concepto.toLowerCase();
+    if (lowerConcepto === "pago movil" || lowerConcepto === "pago movil." || lowerConcepto === "transferencia") {
       concepto = ""; // Generic concept, keep blank to use bank name or default
     }
   }
 
-  // Match Beneficiario name (only if it's a name, skipping RIF / Identification lines like V20055971)
-  const beneficiarioMatch = text.match(/(?:nombre\s+del?\s+beneficiario|beneficiario\s*:)\s*([^\n\r]+)/i);
+  // Match Beneficiario / Comercio name
+  const beneficiarioMatch = text.match(/(?:nombre\s+del?\s+beneficiario|beneficiario\s*:?|comercio\s*:?|establecimiento\s*:?|empresa\s*:?)\s*([^\n\r]+)/i);
   let beneficiario = "";
   if (beneficiarioMatch && beneficiarioMatch[1]) {
     let rawBen = beneficiarioMatch[1].split(/[\r\n]/)[0].trim();
-    rawBen = rawBen.replace(/\s+(tipo|estado|fecha|cuenta|banco)\b.*/i, "").trim();
-    // Skip raw RIFs / CI / ID numbers like V20055971, V-20055971
+    rawBen = rawBen.replace(/\s+(tipo|estado|fecha|cuenta|banco|monto)\b.*/i, "").trim();
     if (!/^[VJEGP]-?\d+$/i.test(rawBen) && !/^\d+$/.test(rawBen) && rawBen.length >= 3) {
       beneficiario = rawBen.toUpperCase();
     }
@@ -229,16 +232,18 @@ function parseMerchant(text: string, subject: string): string {
     return concepto.toUpperCase();
   }
   if (targetBank) {
-    return `PAGO MÓVIL MERCANTIL (${targetBank.toUpperCase()})`;
+    if (isBancamiga) return `PAGO BANCAMIGA (${targetBank.toUpperCase()})`;
+    if (isMercantil) return `PAGO MÓVIL MERCANTIL (${targetBank.toUpperCase()})`;
+    return `PAGO MÓVIL (${targetBank.toUpperCase()})`;
   }
 
   // 2. Generic Regex search for merchant/beneficiary
-  const amountRegex = /(?:Bs\.?|VES|Bs\.S)?\s*\d+(?:\.\d{3})*(?:,\d{1,2})?/gi;
+  const amountRegex = /(?:Bs\.?|VES|Bs\.S|USD|\$)?\s*\d+(?:\.\d{3})*(?:,\d{1,2})?/gi;
   let cleanedText = text.replace(amountRegex, "");
 
   const merchantRegexes = [
-    /(?:a favor de|en favor de|beneficiario:?|destinatario:?|destino:?)\s+([A-Z0-9\s#\-]{3,30})/i,
-    /(?:realizado en|compra en|consumo en|debito en|establecido en|comercio)\s+([A-Z0-9\s#\-]{3,30})/i,
+    /(?:a favor de|en favor de|beneficiario:?|destinatario:?|destino:?|comercio:?|tienda:?)\s+([A-Z0-9\s#\-]{3,30})/i,
+    /(?:realizado en|compra en|consumo en|debito en|establecido en|comercio|tienda)\s+([A-Z0-9\s#\-]{3,30})/i,
     /(?:pago movil a|transferencia a|transferido a|enviado a|pago a|tpago a)\s+([A-Z0-9\s#\-]{3,30})/i,
     /(?:a la cuenta de|cuenta destino:?)\s+([A-Z0-9\s#\-]{3,30})/i,
     /\b(?:en|a)\s+([A-Z0-9\s#\-]{3,30})/i,
@@ -248,10 +253,7 @@ function parseMerchant(text: string, subject: string): string {
     const match = cleanedText.match(regex);
     if (match && match[1]) {
       let name = match[1].trim();
-      
-      // Clean up common trailing words
-      name = name.replace(/\s+(el|la|del|de|fecha|con|por|desde|monto|bs|banco|cuenta)\b.*/i, "");
-      name = name.trim();
+      name = name.replace(/\s+(el|la|del|de|fecha|con|por|desde|monto|bs|banco|cuenta)\b.*/i, "").trim();
 
       const lower = name.toLowerCase();
       if (
@@ -259,6 +261,8 @@ function parseMerchant(text: string, subject: string): string {
         lower !== "cuenta" &&
         lower !== "la cantidad" &&
         lower !== "un monto" &&
+        lower !== "bancamiga" &&
+        lower !== "mercantil" &&
         name.length >= 3
       ) {
         return name.toUpperCase();
@@ -266,16 +270,21 @@ function parseMerchant(text: string, subject: string): string {
     }
   }
 
-  // 3. Defaults for Mercantil / Transfer / Tpago if no specific merchant/beneficiary found
-  const combined = `${subject} ${text}`.toLowerCase();
-  if (combined.includes("tpago") || combined.includes("pago movil")) {
+  // 3. Defaults for Bancamiga / Mercantil / Transfer / Tpago if no specific merchant/beneficiary found
+  if (isBancamiga) {
+    return "Pago Bancamiga";
+  }
+  if (combined.includes("tpago") || (isMercantil && combined.includes("pago movil"))) {
     return "PAGO MÓVIL MERCANTIL";
   }
-  if (combined.includes("mercantil")) {
+  if (isMercantil) {
     return "TRANSFERENCIA MERCANTIL";
   }
+  if (combined.includes("pago movil")) {
+    return "Pago Móvil";
+  }
   if (combined.includes("transferencia")) {
-    return "TRANSFERENCIA BANCARIA";
+    return "Transferencia Bancaria";
   }
 
   // Fallback to subject line or generic notification
@@ -283,7 +292,29 @@ function parseMerchant(text: string, subject: string): string {
     return `CORREO: ${subject.trim()}`;
   }
 
-  return "GASTO AUTOMÁTICO POR CORREO";
+  return "Pago Móvil";
+}
+
+// Emergency Fallback to extract the first valid numeric amount from email text
+function extractFallbackAmount(text: string, html?: string): number | null {
+  const fullContent = `${text || ""} ${stripHtml(html || "")}`;
+  const textWithoutDates = fullContent.replace(/\b\d{1,4}[\/\.-]\d{1,2}[\/\.-]\d{1,4}\b/g, " ");
+
+  const candidateRegex = /\b(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d{1,3}(?:\.\d{3})+|\d+(?:[.,]\d{1,2})?)\b/g;
+  const matches = Array.from(textWithoutDates.matchAll(candidateRegex));
+
+  for (const match of matches) {
+    const rawVal = match[1];
+    const parsed = cleanAndParseNumber(rawVal);
+    if (
+      parsed !== null &&
+      parsed > 0 &&
+      (parsed < 2020 || parsed > 2030)
+    ) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 export async function POST(request: Request) {
@@ -313,25 +344,32 @@ export async function POST(request: Request) {
         }
       };
     } else {
-      // Fallback text parsing if raw format
       const rawText = await request.text();
       body = { text: rawText };
     }
 
-    // 1. Audit logs
-    console.log("Webhook Expenses-Email body keys:", Object.keys(body || {}));
-    if (body?.data && typeof body.data === "object") {
-      console.log("Webhook Expenses-Email body.data keys:", Object.keys(body.data));
-    }
-
-    // 2. Extract payload fields (checking Resend structure: body.data vs body)
+    // 1. Extract payload fields
     let rawText = (body.data?.text || body.data?.body_plain || body.text || body["body-plain"] || "").toString();
     let rawHtml = (body.data?.html || body.data?.body_html || body.html || body["body-html"] || "").toString();
     let emailSubject = (body.data?.subject || body.subject || "").toString();
     let rawFrom = body.data?.from || body.from || body.sender || "";
     let emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
 
-    // 3. Fallback: Fetch full email from Resend API if body content is missing but ID is present
+    // Identify Sender Email
+    let senderEmail = "";
+    const fromStr = Array.isArray(rawFrom) ? rawFrom[0] || "" : rawFrom.toString();
+    if (fromStr) {
+      const match = fromStr.match(/<([^>]+)>/);
+      senderEmail = match ? match[1] : fromStr.trim();
+    }
+
+    const targetEmail = paramEmail || senderEmail;
+
+    // Diagnostic log 1: Remitente recibido
+    console.log("Remitente recibido:", senderEmail);
+    console.log("Webhook Expenses-Email body keys:", Object.keys(body || {}));
+
+    // Fallback: Fetch full email from Resend API if body content is missing but ID is present
     if (!rawText && !rawHtml && emailId && process.env.RESEND_API_KEY) {
       console.log(`Webhook Expenses-Email: Text/HTML missing. Fetching email ID ${emailId} from Resend API...`);
       try {
@@ -349,6 +387,11 @@ export async function POST(request: Request) {
           rawHtml = fetchedData.html || rawHtml;
           emailSubject = emailSubject || fetchedData.subject || "";
           rawFrom = rawFrom || fetchedData.from || "";
+          if (!senderEmail && rawFrom) {
+            const match = rawFrom.match(/<([^>]+)>/);
+            senderEmail = match ? match[1] : rawFrom.trim();
+            console.log("Remitente actualizado desde Resend:", senderEmail);
+          }
         } else {
           console.warn(`Resend API fetch returned status ${res.status}`);
         }
@@ -357,7 +400,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // 4. Normalize and clean HTML content into plain text
+    // Normalize and clean HTML content into plain text
     let emailContent = rawText;
     if (!emailContent && rawHtml) {
       emailContent = stripHtml(rawHtml);
@@ -368,25 +411,32 @@ export async function POST(request: Request) {
       }
     }
 
-    // Audit log: first 200 characters of emailContent
     console.log("Webhook Expenses-Email emailContent snippet (first 200 chars):", emailContent.slice(0, 200));
 
-    // 5. Identify User
-    let senderEmail = "";
-    const fromStr = Array.isArray(rawFrom) ? rawFrom[0] || "" : rawFrom.toString();
-    if (fromStr) {
-      const match = fromStr.match(/<([^>]+)>/);
-      senderEmail = match ? match[1] : fromStr.trim();
+    const combinedStr = `${senderEmail} ${emailSubject} ${emailContent}`.toLowerCase();
+    const isBankEmail = /bancamiga|mercantil/i.test(combinedStr);
+
+    // 2. Parse Amount
+    let amount = parseAmount(emailContent, rawHtml);
+
+    // Bank Emergency Fallback for Amount if parser missed it
+    if (amount === null && isBankEmail) {
+      amount = extractFallbackAmount(emailContent, rawHtml);
     }
 
-    const targetEmail = paramEmail || senderEmail;
+    // Diagnostic log 2: Monto detectado
+    console.log("Monto detectado:", amount);
 
+    // Identify User
     let user = null;
     if (paramUserId) {
       user = await prisma.user.findUnique({ where: { id: paramUserId } });
     }
     if (!user && targetEmail) {
       user = await prisma.user.findUnique({ where: { email: targetEmail } });
+    }
+    if (!user) {
+      user = await prisma.user.findFirst();
     }
 
     if (!user) {
@@ -397,8 +447,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // 6. Parse Amount & Merchant (passing rawHtml as well for HTML table cell extraction)
-    const amount = parseAmount(emailContent, rawHtml);
     if (amount === null) {
       console.warn("Webhook Expenses-Email: Amount not found in email content", { emailContent });
       return NextResponse.json(
@@ -407,15 +455,24 @@ export async function POST(request: Request) {
       );
     }
 
-    const merchant = parseMerchant(emailContent, emailSubject);
+    // Parse Merchant with bank defaults
+    let merchant = parseMerchant(emailContent, emailSubject, senderEmail);
+    if (!merchant || merchant.trim() === "") {
+      if (senderEmail.toLowerCase().includes("bancamiga") || combinedStr.includes("bancamiga")) {
+        merchant = "Pago Bancamiga";
+      } else if (senderEmail.toLowerCase().includes("mercantil") || combinedStr.includes("mercantil")) {
+        merchant = "Pago Móvil";
+      } else {
+        merchant = "Transferencia Bancaria";
+      }
+    }
 
-    // 7. Check Idempotency (prevent duplicate registration on webhook retries)
+    // Check Idempotency (prevent duplicate registration on webhook retries within 10 min)
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
     const existingExpense = await prisma.expense.findFirst({
       where: {
         userId: user.id,
         amount,
-        currency: "VES",
         source: "AUTOMATIC",
         createdAt: {
           gte: tenMinutesAgo,
@@ -427,28 +484,26 @@ export async function POST(request: Request) {
       console.info("Webhook Expenses-Email: Duplicate expense ignored (idempotency check)", {
         expenseId: existingExpense.id,
         user: user.email,
-        amount: `${amount} VES`,
+        amount,
       });
 
-      return NextResponse.json({
-        success: true,
-        message: "Gasto ya registrado previamente (duplicado omitido por idempotencia).",
-        expense: {
-          id: existingExpense.id,
-          description: existingExpense.description,
-          amount: existingExpense.amount,
-          currency: existingExpense.currency,
-          equivalentAmount: existingExpense.equivalentAmount,
-          source: existingExpense.source,
+      return NextResponse.json(
+        {
+          message: "Gasto registrado",
+          success: true,
+          expense: existingExpense,
         },
-      });
+        { status: 200 }
+      );
     }
 
-    // 8. Get Exchange Rate & Calculate Equivalent Amount
+    // Get Exchange Rate & Calculate Equivalent Amount
+    const isUSD = /\bUSD\b|\$/i.test(`${emailSubject} ${emailContent}`) && !/\b(Bs|VES)\b/i.test(`${emailSubject} ${emailContent}`);
+    const currency = isUSD ? "USD" : "VES";
     const exchangeRate = await getLatestExchangeRate();
-    const equivalentAmount = amount / exchangeRate; // Since bank emails are in VES
+    const equivalentAmount = currency === "USD" ? amount : (exchangeRate > 0 ? amount / exchangeRate : amount);
 
-    // 9. Find Category
+    // Find Category
     let category = await prisma.category.findUnique({
       where: { name: "Otros" },
     });
@@ -461,18 +516,18 @@ export async function POST(request: Request) {
       });
     }
 
-    // 10. Create Expense in database
+    // Create Expense in DB
     const expense = await prisma.expense.create({
       data: {
         description: merchant,
         amount,
-        currency: "VES",
+        currency,
         exchangeRate,
         equivalentAmount,
         source: "AUTOMATIC",
         categoryId: category.id,
         userId: user.id,
-        date: new Date(), // Registered at the moment of email receipt
+        date: new Date(),
       },
       include: {
         category: true,
@@ -482,21 +537,18 @@ export async function POST(request: Request) {
     console.info("Webhook Expenses-Email: Expense created automatically", {
       expenseId: expense.id,
       user: user.email,
-      amount: `${amount} VES`,
+      amount: `${amount} ${currency}`,
+      description: merchant,
     });
 
-    return NextResponse.json({
-      success: true,
-      message: "Gasto registrado automáticamente con éxito.",
-      expense: {
-        id: expense.id,
-        description: expense.description,
-        amount: expense.amount,
-        currency: expense.currency,
-        equivalentAmount: expense.equivalentAmount,
-        source: expense.source,
+    return NextResponse.json(
+      {
+        message: "Gasto registrado",
+        success: true,
+        expense,
       },
-    });
+      { status: 200 }
+    );
   } catch (error: any) {
     console.error("Error in expenses-email webhook:", error);
     return NextResponse.json(
@@ -505,3 +557,4 @@ export async function POST(request: Request) {
     );
   }
 }
+
