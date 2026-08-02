@@ -6,14 +6,14 @@ require("dotenv").config();
 async function runTest() {
   const url = "https://control-gastos-livid.vercel.app/api/webhooks/expenses-email?email=utreraabel91@gmail.com";
   
-  // Exact Mercantil APP TPAGO email text format provided by user
+  // Exact Mercantil APP TPAGO email text structure provided by user
   const payload = {
-    subject: "Notificación de Transferencia - Mercantil",
+    subject: "Notificación de Pago Móvil Mercantil",
     text: `Canal: MERCANTIL APP TPAGO
 Fecha y hora de envío: 01/08/2026 09:00:05PM
 Cuenta débito: ********* 3300
-Monto: Bs. 600,00
-Número de confirmación: 02791609020
+Monto: Bs. 650,00
+Número de confirmación: 02791609021
 Concepto: PAGO MOVIL.
 Banco destino: BANCAMIGA BANCO UNIVERSAL, C.A.
 Número de celular destino: ********* 8483
@@ -52,12 +52,12 @@ Estado de la transferencia: APROBADA`
       const recentExpenses = await prisma.expense.findMany({
         where: {
           userId: user.id,
-          amount: 600.00,
+          amount: 650.00,
         },
         orderBy: { createdAt: "desc" }
       });
 
-      console.log(`\n✅ Gasto verificado exitosamente en BD con monto de 600 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
+      console.log(`\n✅ Gasto verificado exitosamente en BD con monto de 650 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
 
       await prisma.$disconnect();
       await pool.end();
