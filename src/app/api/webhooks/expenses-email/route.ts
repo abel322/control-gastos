@@ -408,29 +408,25 @@ export async function POST(request: Request) {
       }
     }
 
-    // 1. Extraer identificadores y campos del payload inicial
+    // 1. Extraer el emailId de la propiedad anidada (body.data?.email_id || body.data?.id || body.email_id || body.id)
     const emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
     let rawText = (body.data?.text || body.data?.body_plain || body.text || body["body-plain"] || "").toString();
     let rawHtml = (body.data?.html || body.data?.body_html || body.html || body["body-html"] || "").toString();
     let emailSubject = (body.data?.subject || body.subject || "").toString();
     let rawFrom = body.data?.from || body.from || body.sender || "";
 
-    // 2. Si se incluye un email_id y existe RESEND_API_KEY, consultar el cuerpo completo desde la API de Resend
+    // 2. Si se incluye un email_id y existe RESEND_API_KEY, consultar el contenido desde la API de Resend
     if (emailId && process.env.RESEND_API_KEY) {
       console.log(`Webhook Expenses-Email: Obteniendo cuerpo completo de correo ID ${emailId} desde Resend API...`);
       try {
-        let res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+        const res = await fetch(`https://api.resend.com/emails/${emailId}`, {
           headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
         });
-        if (!res.ok) {
-          res = await fetch(`https://api.resend.com/emails/${emailId}`, {
-            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
-          });
-        }
         if (res.ok) {
           const emailData = await res.json();
-          // Inspect direct or nested (data.text / data.html) fields from Resend API
-          const fetchedText = emailData.text || emailData.data?.text || emailData.body_plain || emailData.data?.body_plain;
+          console.log("Resend API response keys:", Object.keys(emailData || {}));
+
+          const fetchedText = emailData.text || emailData.html || emailData.data?.text || emailData.data?.html || emailData.body_plain || emailData.data?.body_plain;
           const fetchedHtml = emailData.html || emailData.data?.html || emailData.body_html || emailData.data?.body_html;
           const fetchedSubject = emailData.subject || emailData.data?.subject;
           const fetchedFrom = emailData.from || emailData.data?.from;
@@ -457,7 +453,11 @@ export async function POST(request: Request) {
 
     const targetEmail = paramEmail || senderEmail;
 
-    // 3. Fallback de contenido directo y normalización a texto plano
+    // 3. Fallback de contenido directo y normalizar a texto plano
+    if (!rawText && !rawHtml) {
+      rawText = (body.data?.text || body.data?.html || body.text || body.html || "").toString();
+    }
+
     let emailContent = rawText;
     if (!emailContent && rawHtml) {
       emailContent = stripHtml(rawHtml);
