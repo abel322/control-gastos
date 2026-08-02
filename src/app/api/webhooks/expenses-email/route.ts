@@ -400,11 +400,15 @@ export async function POST(request: Request) {
         }
       };
     } else {
-      const rawText = await request.text();
-      body = { text: rawText };
+      const rawTextStr = await request.text();
+      try {
+        body = JSON.parse(rawTextStr);
+      } catch {
+        body = { text: rawTextStr };
+      }
     }
 
-    // 1. Extraer identificadores y campos iniciales del payload del webhook
+    // 1. Extraer identificadores y campos del payload inicial
     const emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
     let rawText = (body.data?.text || body.data?.body_plain || body.text || body["body-plain"] || "").toString();
     let rawHtml = (body.data?.html || body.data?.body_html || body.html || body["body-html"] || "").toString();
@@ -425,10 +429,16 @@ export async function POST(request: Request) {
         }
         if (res.ok) {
           const emailData = await res.json();
-          rawText = emailData.text || rawText;
-          rawHtml = emailData.html || rawHtml;
-          emailSubject = emailSubject || emailData.subject || "";
-          rawFrom = rawFrom || emailData.from || "";
+          // Inspect direct or nested (data.text / data.html) fields from Resend API
+          const fetchedText = emailData.text || emailData.data?.text || emailData.body_plain || emailData.data?.body_plain;
+          const fetchedHtml = emailData.html || emailData.data?.html || emailData.body_html || emailData.data?.body_html;
+          const fetchedSubject = emailData.subject || emailData.data?.subject;
+          const fetchedFrom = emailData.from || emailData.data?.from;
+
+          if (fetchedText) rawText = fetchedText.toString();
+          if (fetchedHtml) rawHtml = fetchedHtml.toString();
+          if (fetchedSubject) emailSubject = fetchedSubject.toString();
+          if (fetchedFrom) rawFrom = fetchedFrom;
         } else {
           console.warn(`Resend API fetch status ${res.status}`);
         }
@@ -447,7 +457,7 @@ export async function POST(request: Request) {
 
     const targetEmail = paramEmail || senderEmail;
 
-    // Normalizar y limpiar contenido HTML a texto plano
+    // 3. Fallback de contenido directo y normalización a texto plano
     let emailContent = rawText;
     if (!emailContent && rawHtml) {
       emailContent = stripHtml(rawHtml);
@@ -458,12 +468,16 @@ export async function POST(request: Request) {
       }
     }
 
-    // Log de depuración ajustado: Imprimir únicamente los primeros 200 caracteres del TEXTO del correo
-    console.log("Texto del correo a parsear:", (emailContent || "").slice(0, 200));
+    // Log preventivo si el texto sigue estando vacío
+    if (!emailContent || emailContent.trim() === "") {
+      console.log("PAYLOAD RECIBIDO SIN TEXTO:", JSON.stringify(body));
+    } else {
+      console.log("Texto del correo a parsear:", emailContent.slice(0, 200));
+    }
 
     const combinedStr = `${senderEmail} ${emailSubject} ${emailContent}`.toLowerCase();
 
-    // 3. Extraer monto con parseAmount
+    // 4. Extraer monto con parseAmount
     let amount = parseAmount(emailContent, rawHtml);
 
     // Fallback: Si parseAmount no detectó el monto, intentar extracción agresiva después de "Bs", "VES", "$"
