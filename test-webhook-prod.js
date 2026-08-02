@@ -6,13 +6,13 @@ require("dotenv").config();
 async function runTest() {
   const url = "https://control-gastos-livid.vercel.app/api/webhooks/expenses-email?email=utreraabel91@gmail.com";
   
-  // Simulated Mercantil Transfer email payload with integer amount without decimals
+  // Test email payload with multiline structure and integer format
   const payload = {
-    subject: "Usted ha realizado una transferencia",
-    text: "Estimado cliente, usted ha realizado una transferencia por Bs. 15000 el 01/08/2026."
+    subject: "Notificación de Débito Bancario",
+    text: "Mercantil Banco Universal\nNotificación de Pago\n\nMonto (Bs.):\n45000\n\nOperación realizada con éxito el 01/08/2026."
   };
 
-  console.log("1. Enviando petición POST a Vercel con monto entero sin decimales:", url);
+  console.log("1. Enviando petición POST a Vercel con estructura de texto multilínea y monto entero:", url);
   console.log("Cuerpo:", JSON.stringify(payload, null, 2));
 
   try {
@@ -42,12 +42,12 @@ async function runTest() {
       const recentExpenses = await prisma.expense.findMany({
         where: {
           userId: user.id,
-          amount: 15000,
+          amount: 45000,
         },
         orderBy: { createdAt: "desc" }
       });
 
-      console.log(`\n✅ Gasto registrado en BD con monto entero 15000 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
+      console.log(`\n✅ Gasto verificado en BD con monto 45000 Bs:`, JSON.stringify(recentExpenses[0], null, 2));
 
       await prisma.$disconnect();
       await pool.end();

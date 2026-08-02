@@ -27,55 +27,80 @@ function stripHtml(html: string): string {
   return clean;
 }
 
-// Helpers to extract information from email
+// Helper to clean raw numeric strings (e.g. "1.500,00", "15.000", "15000,50", "15000") into floats
+function cleanAndParseNumber(str: string): number | null {
+  if (!str) return null;
+  let s = str.trim();
+
+  // If contains comma, dot is thousand separator and comma is decimal separator
+  if (s.includes(",")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+    // If format is 15.000 or 1.500.000 (dots as thousand separators without decimal comma)
+    s = s.replace(/\./g, "");
+  }
+
+  const num = parseFloat(s);
+  if (!isNaN(num) && num > 0) {
+    return num;
+  }
+  return null;
+}
+
+// Robust multi-strategy helper to extract amount from email text
 function parseAmount(text: string): number | null {
   if (!text) return null;
 
-  // Amount formats in Venezuelan bank emails:
-  // "Bs. 1.234,56", "Bs. 15.000", "por Bs. 15000", "Monto: 1.234,56", "Bs.1234,56", "15000 Bs", etc.
-  const amountRegexes = [
-    // 1. Keyword followed by optional currency and amount (optional thousand dots and optional decimal comma)
-    /(?:monto|importe|cantidad|debito por|compra de|transferencia por|pago de|por la cantidad de|por|monto de):?\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/i,
-    // 2. Currency symbol prefix (Bs. 15.000,00 or Bs. 15000 or Bs.15.000)
-    /(?:Bs\.?|VES|Bs\.S)\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/i,
-    // 3. Amount followed by currency suffix (15.000,00 Bs. or 15000 Bs)
-    /(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:Bs\.?|VES|Bs\.S)/i,
-    // 4. "Monto: 15000" or "Importe: 15.000"
-    /(?:monto|importe|cantidad):?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/i,
-    // 5. Plain number with optional decimal comma: 1250,00 or 450,50
-    /\b(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\b/,
+  // Normalize non-breaking spaces and double spaces
+  const cleanText = text.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+
+  // Strategy 1: Specific Bank Patterns & Keywords (Monto, Importe, Cantidad, Debito, Compra, Transferencia, Pago, etc.)
+  // Matches "Monto: 15.000", "Monto (Bs.): \n 1.500,00", "por la cantidad de Bs 15000", "Bs. 1.250,50", "15000 Bs"
+  const keywordRegexes = [
+    // Keywords followed (possibly across lines/punctuation) by optional currency & amount
+    /(?:monto|importe|cantidad|total|debito|compra|transferencia|pago|consumo|operacion|monto del pago|monto total)[^0-9]{0,30}?(?:Bs\.?|VES|Bs\.S|USD|\$)?\s*(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{1,2})?|\d+(?:[\.\,]\d{1,2})?)/i,
+    // Explicit currency prefix: "Bs. 15.000,00", "Bs 15000", "VES 1200,50", "$ 150"
+    /(?:Bs\.?|VES|Bs\.S|USD|\$)\s*(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{1,2})?|\d+(?:[\.\,]\d{1,2})?)/i,
+    // Explicit currency suffix: "15.000,00 Bs", "15000 Bs."
+    /(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{1,2})?|\d+(?:[\.\,]\d{1,2})?)\s*(?:Bs\.?|VES|Bs\.S|USD|\$)/i,
+    // "por la cantidad de 15000", "por la suma de 15000", "por 15000"
+    /(?:por la cantidad de|por la suma de|por un monto de|por)\s*(?:Bs\.?|VES|Bs\.S|USD|\$)?\s*(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{1,2})?|\d+(?:[\.\,]\d{1,2})?)/i,
   ];
 
-  for (const regex of amountRegexes) {
-    const match = text.match(regex);
+  for (const regex of keywordRegexes) {
+    const match = cleanText.match(regex);
     if (match && match[1]) {
-      let cleanVal = match[1];
-      if (cleanVal.includes(",")) {
-        cleanVal = cleanVal.replace(/\./g, "").replace(",", ".");
-      } else if (/^\d{1,3}(\.\d{3})+$/.test(cleanVal)) {
-        cleanVal = cleanVal.replace(/\./g, "");
-      }
-      const parsed = parseFloat(cleanVal);
-      if (!isNaN(parsed) && parsed > 0) {
-        return parsed;
-      }
+      const parsed = cleanAndParseNumber(match[1]);
+      if (parsed !== null) return parsed;
     }
   }
 
-  // Fallback regex for simpler numeric formats (e.g. Bs. 1500.50 or Bs 1500)
-  const simpleRegexes = [
-    /(?:Bs\.?|VES|Bs\.S)\s*(\d+(?:\.\d+)?)/i,
-    /(\d+(?:\.\d+)?)\s*(?:Bs\.?|VES|Bs\.S)/i
-  ];
-
-  for (const regex of simpleRegexes) {
-    const match = text.match(regex);
-    if (match && match[1]) {
-      const parsed = parseFloat(match[1]);
-      if (!isNaN(parsed) && parsed > 0) {
-        return parsed;
-      }
+  // Strategy 2: Look for numbers with Venezuelan decimal comma format: e.g. "1.250,00" or "450,50" or "1500,00"
+  const commaDecimalRegex = /\b(\d{1,3}(?:\.\d{3})*,\d{1,2}|\d+,\d{1,2})\b/g;
+  const commaMatches = Array.from(cleanText.matchAll(commaDecimalRegex));
+  for (const match of commaMatches) {
+    if (match[1]) {
+      const parsed = cleanAndParseNumber(match[1]);
+      if (parsed !== null) return parsed;
     }
+  }
+
+  // Strategy 3: Look for standalone numbers with thousand dots: e.g. "15.000" or "1.500"
+  const dotThousandsRegex = /\b(\d{1,3}(?:\.\d{3})+)\b/g;
+  const dotMatches = Array.from(cleanText.matchAll(dotThousandsRegex));
+  for (const match of dotMatches) {
+    if (match[1]) {
+      const parsed = cleanAndParseNumber(match[1]);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  // Strategy 4: Fallback - any positive number after currency symbols or numeric words
+  const fallbackRegex = /(?:Bs\.?|VES|Bs\.S|USD|\$|\bMonto\b|\bTotal\b)\s*:?\s*(\d+(?:[\.,]\d+)?)/i;
+  const fallbackMatch = cleanText.match(fallbackRegex);
+  if (fallbackMatch && fallbackMatch[1]) {
+    const parsed = cleanAndParseNumber(fallbackMatch[1]);
+    if (parsed !== null) return parsed;
   }
 
   return null;
