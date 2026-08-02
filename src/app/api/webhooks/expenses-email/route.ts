@@ -340,6 +340,7 @@ export async function POST(request: Request) {
     ) {
       const formData = await request.formData();
       body = {
+        type: formData.get("type"),
         from: formData.get("from") || formData.get("sender"),
         to: formData.get("to") || formData.get("recipient"),
         subject: formData.get("subject"),
@@ -354,14 +355,40 @@ export async function POST(request: Request) {
       body = { text: rawText };
     }
 
-    // 1. Extract payload fields
+    // 1. Extraer identificadores y campos iniciales del payload del webhook
+    const emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
     let rawText = (body.data?.text || body.data?.body_plain || body.text || body["body-plain"] || "").toString();
     let rawHtml = (body.data?.html || body.data?.body_html || body.html || body["body-html"] || "").toString();
     let emailSubject = (body.data?.subject || body.subject || "").toString();
     let rawFrom = body.data?.from || body.from || body.sender || "";
-    let emailId = body.data?.email_id || body.data?.id || body.email_id || body.id || "";
 
-    // Identify Sender Email
+    // 2. Si se incluye un email_id y existe RESEND_API_KEY, consultar el cuerpo completo desde la API de Resend
+    if (emailId && process.env.RESEND_API_KEY) {
+      console.log(`Webhook Expenses-Email: Obteniendo cuerpo completo de correo ID ${emailId} desde Resend API...`);
+      try {
+        let res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+        });
+        if (!res.ok) {
+          res = await fetch(`https://api.resend.com/emails/${emailId}`, {
+            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+          });
+        }
+        if (res.ok) {
+          const emailData = await res.json();
+          rawText = emailData.text || rawText;
+          rawHtml = emailData.html || rawHtml;
+          emailSubject = emailSubject || emailData.subject || "";
+          rawFrom = rawFrom || emailData.from || "";
+        } else {
+          console.warn(`Resend API fetch status ${res.status}`);
+        }
+      } catch (err: any) {
+        console.warn("Failed to fetch email from Resend API:", err.message);
+      }
+    }
+
+    // Identificar Remitente
     let senderEmail = "";
     const fromStr = Array.isArray(rawFrom) ? rawFrom[0] || "" : rawFrom.toString();
     if (fromStr) {
@@ -371,42 +398,7 @@ export async function POST(request: Request) {
 
     const targetEmail = paramEmail || senderEmail;
 
-    // Diagnostic log 1: Remitente recibido
-    console.log("Remitente recibido:", senderEmail);
-    console.log("Webhook Expenses-Email body keys:", Object.keys(body || {}));
-
-    // Fallback: Fetch full email from Resend API if body content is missing but ID is present
-    if (!rawText && !rawHtml && emailId && process.env.RESEND_API_KEY) {
-      console.log(`Webhook Expenses-Email: Text/HTML missing. Fetching email ID ${emailId} from Resend API...`);
-      try {
-        let res = await fetch(`https://api.resend.com/emails/${emailId}`, {
-          headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
-        });
-        if (!res.ok) {
-          res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
-            headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
-          });
-        }
-        if (res.ok) {
-          const fetchedData = await res.json();
-          rawText = fetchedData.text || rawText;
-          rawHtml = fetchedData.html || rawHtml;
-          emailSubject = emailSubject || fetchedData.subject || "";
-          rawFrom = rawFrom || fetchedData.from || "";
-          if (!senderEmail && rawFrom) {
-            const match = rawFrom.match(/<([^>]+)>/);
-            senderEmail = match ? match[1] : rawFrom.trim();
-            console.log("Remitente actualizado desde Resend:", senderEmail);
-          }
-        } else {
-          console.warn(`Resend API fetch returned status ${res.status}`);
-        }
-      } catch (err: any) {
-        console.warn("Failed to fetch email from Resend API:", err.message);
-      }
-    }
-
-    // Normalize and clean HTML content into plain text
+    // Normalizar y limpiar contenido HTML a texto plano
     let emailContent = rawText;
     if (!emailContent && rawHtml) {
       emailContent = stripHtml(rawHtml);
@@ -417,19 +409,20 @@ export async function POST(request: Request) {
       }
     }
 
-    console.log("Webhook Expenses-Email emailContent snippet (first 200 chars):", emailContent.slice(0, 200));
+    // Log de depuración ajustado: Imprimir únicamente los primeros 200 caracteres del TEXTO del correo
+    console.log("Texto del correo a parsear:", (emailContent || "").slice(0, 200));
 
     const combinedStr = `${senderEmail} ${emailSubject} ${emailContent}`.toLowerCase();
 
-    // 2. Parse Amount strictly
+    // 3. Extraer monto estrictamente
     const amount = parseAmount(emailContent, rawHtml);
 
-    // Diagnostic log 2: Monto detectado
+    // Log: Monto detectado
     console.log("Monto detectado:", amount);
 
-    // 3. Strict Check: Amount must be valid and > 0
+    // 4. Verificación estricta del monto (> 0)
     if (amount === null || amount <= 0) {
-      console.error("=== NO SE PUDO PARSEAR ESTE CORREO ===", emailContent || rawText || rawHtml || JSON.stringify(body));
+      console.error("=== NO SE PUDO PARSEAR ESTE CORREO ===", (emailContent || "").slice(0, 200));
       return NextResponse.json(
         { error: "No se pudo extraer el monto exacto" },
         { status: 400 }
