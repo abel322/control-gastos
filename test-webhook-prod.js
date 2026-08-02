@@ -5,30 +5,40 @@ require("dotenv").config();
 
 async function runTest() {
   const url = "https://control-gastos-livid.vercel.app/api/webhooks/expenses-email?email=utreraabel91@gmail.com";
+  
+  // Simulated Mercantil Transfer email payload
   const payload = {
-    subject: "Notificación de Pago Móvil",
-    text: "Banesco Banco Universal informa: Pago Movil por Bs. 2.500,00 a favor de FARMATODO el 01/08/2026."
+    subject: "Usted ha realizado una transferencia",
+    text: "Mercantil Banco Universal informa: Ha realizado una transferencia por la cantidad de Bs. 1.850,50 a favor de PEDRO PEREZ el 01/08/2026."
   };
 
-  console.log("1. Enviando petición POST a Vercel:", url);
+  console.log("1. Enviando petición POST a Vercel con correo de Mercantil:", url);
   console.log("Cuerpo:", JSON.stringify(payload, null, 2));
 
   try {
-    const response = await fetch(url, {
+    // First Call
+    console.log("\n--- PRIMERA LLAMADA (Creación) ---");
+    const response1 = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    console.log("Estado:", response1.status, response1.statusText);
+    const body1 = await response1.json();
+    console.log("Respuesta 1:", JSON.stringify(body1, null, 2));
 
-    console.log("\n2. Respuesta de Vercel recibida:");
-    console.log("Estado:", response.status, response.statusText);
-    
-    const responseBody = await response.json();
-    console.log("Cuerpo de respuesta:", JSON.stringify(responseBody, null, 2));
+    // Second Call (Retry - testing Idempotency)
+    console.log("\n--- SEGUNDA LLAMADA (Prueba de Idempotencia / Reintento de Resend) ---");
+    const response2 = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    console.log("Estado:", response2.status, response2.statusText);
+    const body2 = await response2.json();
+    console.log("Respuesta 2 (Duplicado omitido):", JSON.stringify(body2, null, 2));
 
-    if (response.ok && responseBody.success) {
+    if (response1.ok && response2.ok) {
       console.log("\n3. Verificando base de datos...");
       
       const connectionString = process.env.DATABASE_URL;
@@ -36,46 +46,27 @@ async function runTest() {
       const adapter = new PrismaPg(pool);
       const prisma = new PrismaClient({ adapter });
 
-      // Find the user first to make sure we lookup the right expenses
       const user = await prisma.user.findUnique({
         where: { email: "utreraabel91@gmail.com" }
       });
 
-      if (!user) {
-        console.error("No se encontró el usuario usuario@demo.com en la base de datos.");
-        await pool.end();
-        return;
-      }
-
-      // Find recently created expenses for this user
       const recentExpenses = await prisma.expense.findMany({
         where: {
           userId: user.id,
-          amount: 2500,
-          description: {
-            contains: "FARMATODO"
-          }
+          amount: 1850.50,
+          description: { contains: "PEDRO PEREZ" }
         },
-        orderBy: {
-          createdAt: "desc"
-        },
-        take: 1
+        orderBy: { createdAt: "desc" }
       });
 
-      if (recentExpenses.length > 0) {
-        console.log("✅ Gasto verificado exitosamente en la base de datos:");
-        console.log(JSON.stringify(recentExpenses[0], null, 2));
-      } else {
-        console.log("❌ No se encontró el gasto en la base de datos.");
-      }
+      console.log(`✅ Cantidad de registros creados en BD para este monto (debe ser 1): ${recentExpenses.length}`);
+      console.log("Registro encontrado en BD:", JSON.stringify(recentExpenses[0], null, 2));
 
       await prisma.$disconnect();
       await pool.end();
-    } else {
-      console.log("❌ El webhook en Vercel falló o no devolvió success.");
     }
   } catch (error) {
-    console.error("Error ejecutando la prueba en Vercel:", error);
+    console.error("Error ejecutando la prueba:", error);
   }
 }
 

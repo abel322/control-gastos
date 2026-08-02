@@ -29,12 +29,21 @@ function stripHtml(html: string): string {
 
 // Helpers to extract information from email
 function parseAmount(text: string): number | null {
-  // Typical Venezuelan amounts look like: Bs. 1.250,00 or Bs. 450,50 or Bs 1200
+  if (!text) return null;
+
+  // Amount formats in Venezuelan bank emails:
+  // "Bs. 1.234,56", "Monto: 1.234,56", "Bs.1234,56", "por la cantidad de Bs. 1.234,56", "1.234,56 Bs", etc.
   const amountRegexes = [
-    /(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i, // Format: 1.250,00 or Bs.1.250,00
-    /monto:?\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i, // Format: Monto: Bs. 1.250,00
-    /debito por\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i,
-    /compra de\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i
+    // 1. Keyword followed by optional currency and amount with thousands (.) and decimal (,)
+    /(?:monto|importe|cantidad|debito por|compra de|transferencia por|pago de|por la cantidad de|por|monto de):?\s*(?:Bs\.?|VES|Bs\.S)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i,
+    // 2. Currency symbol prefix (Bs. 1.250,00 or Bs.1.250,00 or VES 1.250,00)
+    /(?:Bs\.?|VES|Bs\.S)\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2}))/i,
+    // 3. Amount followed by currency suffix (1.250,00 Bs. or 1250,00 Bs)
+    /(\d{1,3}(?:\.\d{3})*(?:,\d{2}))\s*(?:Bs\.?|VES|Bs\.S)/i,
+    // 4. "Monto: 1250,00" or "Importe: 1250,00"
+    /(?:monto|importe|cantidad):?\s*(\d{1,3}(?:[\.\,]\d{3})*(?:[\.\,]\d{2}))/i,
+    // 5. Plain number with comma decimal format: 1250,00 or 450,50
+    /\b(\d{1,3}(?:\.\d{3})*,\d{2})\b/,
   ];
 
   for (const regex of amountRegexes) {
@@ -48,13 +57,19 @@ function parseAmount(text: string): number | null {
     }
   }
 
-  // Fallback regex for simpler numeric formats (e.g. 1500.50 or 1500)
-  const simpleRegex = /(?:Bs\.?|VES|Bs\.S)\s*(\d+(?:\.\d+)?)/i;
-  const simpleMatch = text.match(simpleRegex);
-  if (simpleMatch && simpleMatch[1]) {
-    const parsed = parseFloat(simpleMatch[1]);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
+  // Fallback regex for simpler numeric formats (e.g. Bs. 1500.50 or Bs 1500)
+  const simpleRegexes = [
+    /(?:Bs\.?|VES|Bs\.S)\s*(\d+(?:\.\d+)?)/i,
+    /(\d+(?:\.\d+)?)\s*(?:Bs\.?|VES|Bs\.S)/i
+  ];
+
+  for (const regex of simpleRegexes) {
+    const match = text.match(regex);
+    if (match && match[1]) {
+      const parsed = parseFloat(match[1]);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
     }
   }
 
@@ -62,17 +77,15 @@ function parseAmount(text: string): number | null {
 }
 
 function parseMerchant(text: string, subject: string): string {
-  // First, extract the amount so we can clean it from the text
+  // First, extract amount patterns to clean them from text
   const amountRegex = /(?:Bs\.?|VES|Bs\.S)?\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?/gi;
   let cleanedText = text.replace(amountRegex, "");
 
-  // Now search for the merchant name using keyword patterns
   const merchantRegexes = [
-    /(?:a favor de|en favor de)\s+([A-Z0-9\s#\-]{3,30})/i,
-    /(?:realizado en|compra en|consumo en|debito en|establecido en)\s+([A-Z0-9\s#\-]{3,30})/i,
-    /(?:comercio|destinatario|destino)\s+([A-Z0-9\s#\-]{3,30})/i,
-    /(?:pago movil a)\s+([A-Z0-9\s#\-]{3,30})/i,
-    /(?:transferencia a)\s+([A-Z0-9\s#\-]{3,30})/i,
+    /(?:a favor de|en favor de|beneficiario:?|destinatario:?|destino:?)\s+([A-Z0-9\s#\-]{3,30})/i,
+    /(?:realizado en|compra en|consumo en|debito en|establecido en|comercio)\s+([A-Z0-9\s#\-]{3,30})/i,
+    /(?:pago movil a|transferencia a|transferido a|enviado a|pago a|tpago a)\s+([A-Z0-9\s#\-]{3,30})/i,
+    /(?:a la cuenta de|cuenta destino:?)\s+([A-Z0-9\s#\-]{3,30})/i,
     /\b(?:en|a)\s+([A-Z0-9\s#\-]{3,30})/i,
   ];
 
@@ -81,15 +94,33 @@ function parseMerchant(text: string, subject: string): string {
     if (match && match[1]) {
       let name = match[1].trim();
       
-      // Clean up common trailing words like "el", "la", "del", or dates/times
-      name = name.replace(/\s+(el|la|del|de|fecha|con|por|desde)\b.*/i, "");
+      // Clean up common trailing words
+      name = name.replace(/\s+(el|la|del|de|fecha|con|por|desde|monto|bs|banco|cuenta)\b.*/i, "");
       name = name.trim();
 
-      // Avoid generic matches
-      if (name.toLowerCase() !== "favor de" && name.toLowerCase() !== "cuenta" && name.length >= 3) {
+      const lower = name.toLowerCase();
+      if (
+        lower !== "favor de" &&
+        lower !== "cuenta" &&
+        lower !== "la cantidad" &&
+        lower !== "un monto" &&
+        name.length >= 3
+      ) {
         return name.toUpperCase();
       }
     }
+  }
+
+  // Defaults for Mercantil / Transfer / Tpago if no specific merchant/beneficiary found
+  const combined = `${subject} ${text}`.toLowerCase();
+  if (combined.includes("tpago")) {
+    return "MERCANTIL TPAGO";
+  }
+  if (combined.includes("mercantil")) {
+    return "TRANSFERENCIA MERCANTIL";
+  }
+  if (combined.includes("transferencia")) {
+    return "TRANSFERENCIA BANCARIA";
   }
 
   // Fallback to subject line or generic notification
@@ -176,7 +207,6 @@ export async function POST(request: Request) {
     if (!emailContent && rawHtml) {
       emailContent = stripHtml(rawHtml);
     } else if (rawHtml && emailContent) {
-      // If both exist, combine stripped HTML as additional fallback text if text is very short
       const cleanHtmlText = stripHtml(rawHtml);
       if (cleanHtmlText.length > emailContent.length) {
         emailContent = cleanHtmlText;
@@ -224,11 +254,46 @@ export async function POST(request: Request) {
 
     const merchant = parseMerchant(emailContent, emailSubject);
 
-    // 7. Get Exchange Rate & Calculate Equivalent Amount
+    // 7. Check Idempotency (prevent duplicate registration on webhook retries)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const existingExpense = await prisma.expense.findFirst({
+      where: {
+        userId: user.id,
+        amount,
+        currency: "VES",
+        source: "AUTOMATIC",
+        createdAt: {
+          gte: tenMinutesAgo,
+        },
+      },
+    });
+
+    if (existingExpense) {
+      console.info("Webhook Expenses-Email: Duplicate expense ignored (idempotency check)", {
+        expenseId: existingExpense.id,
+        user: user.email,
+        amount: `${amount} VES`,
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: "Gasto ya registrado previamente (duplicado omitido por idempotencia).",
+        expense: {
+          id: existingExpense.id,
+          description: existingExpense.description,
+          amount: existingExpense.amount,
+          currency: existingExpense.currency,
+          equivalentAmount: existingExpense.equivalentAmount,
+          source: existingExpense.source,
+        },
+      });
+    }
+
+    // 8. Get Exchange Rate & Calculate Equivalent Amount
     const exchangeRate = await getLatestExchangeRate();
     const equivalentAmount = amount / exchangeRate; // Since bank emails are in VES
 
-    // 8. Find Category
+    // 9. Find Category
     let category = await prisma.category.findUnique({
       where: { name: "Otros" },
     });
@@ -241,7 +306,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 9. Create Expense in database
+    // 10. Create Expense in database
     const expense = await prisma.expense.create({
       data: {
         description: merchant,
