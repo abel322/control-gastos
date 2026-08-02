@@ -9,7 +9,7 @@ async function runTest() {
   // Simulated Mercantil Transfer email payload
   const payload = {
     subject: "Usted ha realizado una transferencia",
-    text: "Mercantil Banco Universal informa: Ha realizado una transferencia por la cantidad de Bs. 1.850,50 a favor de PEDRO PEREZ el 01/08/2026."
+    text: "Mercantil Banco Universal informa: Ha realizado una transferencia por la cantidad de Bs. 3.450,25 a favor de CARLOS BLANCO el 01/08/2026."
   };
 
   console.log("1. Enviando petición POST a Vercel con correo de Mercantil:", url);
@@ -36,7 +36,7 @@ async function runTest() {
     });
     console.log("Estado:", response2.status, response2.statusText);
     const body2 = await response2.json();
-    console.log("Respuesta 2 (Duplicado omitido):", JSON.stringify(body2, null, 2));
+    console.log("Respuesta 2 (Duplicado omitido por idempotencia):", JSON.stringify(body2, null, 2));
 
     if (response1.ok && response2.ok) {
       console.log("\n3. Verificando base de datos...");
@@ -53,14 +53,19 @@ async function runTest() {
       const recentExpenses = await prisma.expense.findMany({
         where: {
           userId: user.id,
-          amount: 1850.50,
-          description: { contains: "PEDRO PEREZ" }
+          amount: 3450.25,
+          description: { contains: "CARLOS BLANCO" }
         },
         orderBy: { createdAt: "desc" }
       });
 
-      console.log(`✅ Cantidad de registros creados en BD para este monto (debe ser 1): ${recentExpenses.length}`);
-      console.log("Registro encontrado en BD:", JSON.stringify(recentExpenses[0], null, 2));
+      console.log(`\n✅ Cantidad de registros creados en BD para este monto (DEBE SER EXACTAMENTE 1): ${recentExpenses.length}`);
+      if (recentExpenses.length === 1) {
+        console.log("🎉 SUCCESS: ¡El chequeo de idempotencia evitó duplicar el gasto!");
+      } else {
+        console.log("⚠️ Aún no se ha completado el despliegue en Vercel.");
+      }
+      console.log("Registro en BD:", JSON.stringify(recentExpenses[0], null, 2));
 
       await prisma.$disconnect();
       await pool.end();
