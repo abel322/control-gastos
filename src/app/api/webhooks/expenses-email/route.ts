@@ -27,49 +27,38 @@ function stripHtml(html: string): string {
   return clean;
 }
 
-// Helper to clean raw numeric strings (e.g. "1.500,00", "15.000", "15000,50", "45000", "600,00") into floats
+// Helper to clean raw numeric strings (e.g. "1.200,00", "1200,00", "1.200", "15.000,50") into floats
 function cleanAndParseNumber(str: string): number | null {
   if (!str) return null;
-  const originalStr = str;
-  let s = str.trim();
 
-  // Strip currency prefixes and suffixes
-  s = s.replace(/^(?:Bs\.?|VES|Bs\.S|USD|\$)\s*/i, "").replace(/\s*(?:Bs\.?|VES|Bs\.S|USD|\$)$/i, "").trim();
+  // Limpiar prefijos y sufijos de monedas (Bs, Bs., VES, USD, $, etc.)
+  let s = str.trim().replace(/^(?:Bs\.?|VES|Bs\.S|USD|\$)\s*/i, "").replace(/\s*(?:Bs\.?|VES|Bs\.S|USD|\$)$/i, "").trim();
   if (!s) return null;
 
-  let cleanedStr = s;
+  // 1. Limpiar espacios y caracteres invisibles
+  let clean = s.replace(/\s+/g, '');
 
-  // 1. Formato Venezolano / Internacional con comas y puntos (ej: "1.500,00" o "1,500.00")
-  if (s.includes(",") && s.includes(".")) {
-    const lastComma = s.lastIndexOf(",");
-    const lastDot = s.lastIndexOf(".");
-    if (lastComma > lastDot) {
-      // Formato Venezolano: Puntos = miles, Coma = decimal (ej: "1.500,00" -> "1500.00")
-      cleanedStr = s.replace(/\./g, "").replace(",", ".");
-    } else {
-      // Formato US: Comas = miles, Punto = decimal (ej: "1,500.00" -> "1500.00")
-      cleanedStr = s.replace(/,/g, "");
+  // 2. Si tiene formato venezolano "1.200,00" o "1200,00":
+  if (clean.includes(',')) {
+    // Eliminar puntos de miles
+    clean = clean.replace(/\./g, '');
+    // Cambiar coma decimal por punto
+    clean = clean.replace(',', '.');
+  } 
+  // 3. Si no tiene coma pero tiene punto de miles "1.200" o "1200":
+  else if ((clean.match(/\./g) || []).length === 1 && !clean.endsWith('.00')) {
+    // Si el punto divide exactamente miles (ej: 1.200)
+    const parts = clean.split('.');
+    if (parts[1] && parts[1].length === 3) {
+      clean = clean.replace('.', '');
     }
   }
-  // 2. Formato con coma decimal sin puntos (ej: "1500,00" o "350,50")
-  else if (s.includes(",")) {
-    cleanedStr = s.replace(",", ".");
-  }
-  // 3. Formato con punto sin coma (ej: "1.500", "15.000", "1.500.000" vs "1500.00")
-  else if (s.includes(".")) {
-    // Si tiene estructura de separador de miles venezolano (ej: 1.500 o 15.000) -> eliminar puntos
-    if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
-      cleanedStr = s.replace(/\./g, "");
-    }
-    // Si es un decimal estándar con punto (ej: 1500.00 o 150.5), se mantiene
-  }
 
-  const num = parseFloat(cleanedStr);
-  const result = !isNaN(num) && num > 0 ? num : null;
+  const num = parseFloat(clean);
+  if (isNaN(num)) return null;
 
-  console.log("Número original:", originalStr, "-> Convertido:", result);
-
-  return result;
+  console.log(`[PARSER NUMERICO] Input original: "${str}" -> Procesado: ${num}`);
+  return num;
 }
 
 // Helper to extract amount directly from HTML tables (e.g., Mercantil, Bancamiga, etc.)
