@@ -27,13 +27,29 @@ function stripHtml(html: string): string {
   return clean;
 }
 
-// Helper to clean raw numeric strings (e.g. "1200,00", "1.200,00", "Bs. 1200,00") into floats
+// Helper to clean raw numeric strings (e.g. "9.385,14", "1200,00", "9.385") into floats
 function cleanAndParseNumber(str: string): number | null {
   if (!str) return null;
-  // Eliminar todo lo que no sea dígito o coma
-  let clean = str.replace(/[^\d,]/g, '');
-  // Cambiar la coma decimal venezolana por punto
-  clean = clean.replace(',', '.');
+
+  let clean = str.trim().replace(/^(?:Bs\.?|VES|Bs\.S|USD|\$)\s*/i, "").replace(/\s*(?:Bs\.?|VES|Bs\.S|USD|\$)$/i, "").trim();
+  if (!clean) return null;
+
+  // Si tiene punto de miles y coma decimal (ej: "9.385,14"):
+  if (clean.includes('.') && clean.includes(',')) {
+    clean = clean.replace(/\./g, '').replace(',', '.');
+  } 
+  // Si solo tiene coma decimal (ej: "9385,14"):
+  else if (clean.includes(',')) {
+    clean = clean.replace(',', '.');
+  } 
+  // Si solo tiene punto de miles (ej: "9.385"):
+  else if (clean.includes('.')) {
+    const parts = clean.split('.');
+    if (parts[1] && parts[1].length === 3) {
+      clean = clean.replace('.', '');
+    }
+  }
+
   const num = parseFloat(clean);
   const result = isNaN(num) ? null : num;
   console.log(`[PARSER NUMERICO] Input original: "${str}" -> Procesado: ${result}`);
@@ -126,18 +142,20 @@ function parseAmount(text: string, html?: string): number | null {
 
   const noiseFreeText = filteredLines.join("\n");
 
-  // Strategy 2.5: Patrón específico para Mercantil / Bancamiga ("Monto: Bs. 1200,00", "Importe: Bs 1200,00")
-  const mercantilPattern = /(?:Monto\s*total|Monto|Importe)[\s\:\=]*Bs\.?\s*([\d]{1,7}(?:\,[\d]{2})?)/i;
-  const mercantilMatch = noiseFreeText.match(mercantilPattern) || textWithoutDates.match(mercantilPattern) || (html ? stripHtml(html).match(mercantilPattern) : null);
-  if (mercantilMatch && mercantilMatch[1]) {
-    const parsed = cleanAndParseNumber(mercantilMatch[1]);
-    if (parsed !== null) return parsed;
+  // Strategy 2.5: Expresión Regular para montos con miles y decimales de Bancamiga/Mercantil (ej. "Bs 9.385,14", "Bs. 1200,00")
+  const currencyAmountRegex = /(?:Bs\.?|VES|USD|\$)\s*([\d]{1,3}(?:\.[\d]{3})*(?:\,[\d]{2})?|[\d]+(?:[\,\.][\d]{1,2})?)/gi;
+  let currencyMatch;
+  while ((currencyMatch = currencyAmountRegex.exec(noiseFreeText)) !== null) {
+    if (currencyMatch[1]) {
+      const parsed = cleanAndParseNumber(currencyMatch[1]);
+      if (parsed !== null && parsed > 0) return parsed;
+    }
   }
 
   // Flexible numeric format pattern:
-  // Part 1: Plain digits 1-7 with optional decimal comma: 1200,00 or 1200 or 45000,50
-  // Part 2: Formatted thousands: 1.500,00 or 15.000
-  const numPattern = `(\\d{1,7}(?:,\\d{1,2})?|\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?|\\d+)`;
+  // Part 1: Formatted thousands & optional decimals: 9.385,14 or 1.500,00
+  // Part 2: Plain digits 1-7 with optional decimal comma: 1200,00 or 1200
+  const numPattern = `([\\d]{1,3}(?:\\.[\\d]{3})*(?:\\,[\\d]{2})?|[\\d]+(?:[\\,\\.][\\d]{1,2})?)`;
 
   // Strategy 3: Explicit Amount Phrases (e.g., "Monto:", "Monto de la operación:", "Importe:", "Monto debitado:", etc.)
   const explicitPrefixRegex = new RegExp(
@@ -174,7 +192,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 5: Explicit Currency Prefix: "Bs. 600,00", "Bs. 600", "Bs 15000", "VES 1200,50", "$ 150"
+  // Strategy 5: Explicit Currency Prefix
   const prefixRegex = new RegExp(`(?:Bs\\.?|VES|Bs\\.S|USD|\\$)\\s*${numPattern}`, "i");
   match = noiseFreeText.match(prefixRegex);
   if (match && match[1]) {
@@ -182,7 +200,7 @@ function parseAmount(text: string, html?: string): number | null {
     if (parsed !== null) return parsed;
   }
 
-  // Strategy 6: Explicit Currency Suffix: "600,00 Bs", "600 Bs."
+  // Strategy 6: Explicit Currency Suffix
   const suffixRegex = new RegExp(`${numPattern}\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)`, "i");
   match = noiseFreeText.match(suffixRegex);
   if (match && match[1]) {
@@ -211,8 +229,8 @@ function extractFallbackAmount(text: string, html?: string): number | null {
   // Strip dates so dates aren't misparsed as amounts
   const textWithoutDates = cleanContent.replace(/\b\d{1,4}[\/\.-]\d{1,2}[\/\.-]\d{1,4}\b/g, " ");
 
-  // 1. Check numbers directly following currency symbols/words: "Bs. 600,00", "Bs 600", "Bs:\n600,00", "Bs. 1.500", "VES 50,00", "$ 15.00"
-  const prefixRegex = /(?:Bs\.?|VES|Bs\\.S|USD|\$)\s*:?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?|\d+)/gi;
+  // 1. Check numbers directly following currency symbols/words: "Bs. 9.385,14", "Bs 600", "Bs:\n600,00"
+  const prefixRegex = /(?:Bs\.?|VES|USD|\$)\s*:?\s*([\d]{1,3}(?:\.[\d]{3})*(?:\,[\d]{2})?|[\d]+(?:[\,\.][\d]{1,2})?)/gi;
 
   let match;
   while ((match = prefixRegex.exec(textWithoutDates)) !== null) {
@@ -225,7 +243,7 @@ function extractFallbackAmount(text: string, html?: string): number | null {
   }
 
   // 2. Check numbers followed by currency symbols/words: "600,00 Bs.", "600 Bs"
-  const suffixRegex = /(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?|\d+)\s*(?:Bs\.?|VES|Bs\\.S|USD|\$)/gi;
+  const suffixRegex = /([\d]{1,3}(?:\.[\d]{3})*(?:\,[\d]{2})?|[\d]+(?:[\,\.][\d]{1,2})?)\s*(?:Bs\.?|VES|USD|\$)/gi;
   while ((match = suffixRegex.exec(textWithoutDates)) !== null) {
     if (match[1]) {
       const parsed = cleanAndParseNumber(match[1]);
