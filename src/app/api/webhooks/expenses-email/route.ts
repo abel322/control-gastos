@@ -27,38 +27,17 @@ function stripHtml(html: string): string {
   return clean;
 }
 
-// Helper to clean raw numeric strings (e.g. "1.200,00", "1200,00", "1.200", "15.000,50") into floats
+// Helper to clean raw numeric strings (e.g. "1200,00", "1.200,00", "Bs. 1200,00") into floats
 function cleanAndParseNumber(str: string): number | null {
   if (!str) return null;
-
-  // Limpiar prefijos y sufijos de monedas (Bs, Bs., VES, USD, $, etc.)
-  let s = str.trim().replace(/^(?:Bs\.?|VES|Bs\.S|USD|\$)\s*/i, "").replace(/\s*(?:Bs\.?|VES|Bs\.S|USD|\$)$/i, "").trim();
-  if (!s) return null;
-
-  // 1. Limpiar espacios y caracteres invisibles
-  let clean = s.replace(/\s+/g, '');
-
-  // 2. Si tiene formato venezolano "1.200,00" o "1200,00":
-  if (clean.includes(',')) {
-    // Eliminar puntos de miles
-    clean = clean.replace(/\./g, '');
-    // Cambiar coma decimal por punto
-    clean = clean.replace(',', '.');
-  } 
-  // 3. Si no tiene coma pero tiene punto de miles "1.200" o "1200":
-  else if ((clean.match(/\./g) || []).length === 1 && !clean.endsWith('.00')) {
-    // Si el punto divide exactamente miles (ej: 1.200)
-    const parts = clean.split('.');
-    if (parts[1] && parts[1].length === 3) {
-      clean = clean.replace('.', '');
-    }
-  }
-
+  // Eliminar todo lo que no sea dígito o coma
+  let clean = str.replace(/[^\d,]/g, '');
+  // Cambiar la coma decimal venezolana por punto
+  clean = clean.replace(',', '.');
   const num = parseFloat(clean);
-  if (isNaN(num)) return null;
-
-  console.log(`[PARSER NUMERICO] Input original: "${str}" -> Procesado: ${num}`);
-  return num;
+  const result = isNaN(num) ? null : num;
+  console.log(`[PARSER NUMERICO] Input original: "${str}" -> Procesado: ${result}`);
+  return result;
 }
 
 // Helper to extract amount directly from HTML tables (e.g., Mercantil, Bancamiga, etc.)
@@ -147,15 +126,20 @@ function parseAmount(text: string, html?: string): number | null {
 
   const noiseFreeText = filteredLines.join("\n");
 
+  // Strategy 2.5: Patrón específico para Mercantil / Bancamiga ("Monto: Bs. 1200,00", "Importe: Bs 1200,00")
+  const mercantilPattern = /(?:Monto\s*total|Monto|Importe)[\s\:\=]*Bs\.?\s*([\d]{1,7}(?:\,[\d]{2})?)/i;
+  const mercantilMatch = noiseFreeText.match(mercantilPattern) || textWithoutDates.match(mercantilPattern) || (html ? stripHtml(html).match(mercantilPattern) : null);
+  if (mercantilMatch && mercantilMatch[1]) {
+    const parsed = cleanAndParseNumber(mercantilMatch[1]);
+    if (parsed !== null) return parsed;
+  }
+
   // Flexible numeric format pattern:
-  // Part 1: Formatted thousands & optional decimals: 1.500,00 or 1.500
-  // Part 2: Formatted with thousand dots only: 15.000 or 1.500.000
-  // Part 3: Plain integer or comma decimal: 45000,50 or 45000 or 600,00 or 600
-  const numPattern = `(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?|\\d{1,3}(?:\\.\\d{3})+|\\d+(?:,\\d{1,2})?|\\d+)`;
+  // Part 1: Plain digits 1-7 with optional decimal comma: 1200,00 or 1200 or 45000,50
+  // Part 2: Formatted thousands: 1.500,00 or 15.000
+  const numPattern = `(\\d{1,7}(?:,\\d{1,2})?|\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?|\\d+)`;
 
   // Strategy 3: Explicit Amount Phrases (e.g., "Monto:", "Monto de la operación:", "Importe:", "Monto debitado:", etc.)
-  // Matches flexible spaces, newlines, optional colon, optional currency symbol, optional decimals:
-  // e.g. "Monto: Bs. 600,00", "Monto:Bs.600,00", "Monto: \n Bs. 600,00", "Monto: Bs. 600"
   const explicitPrefixRegex = new RegExp(
     `(?:monto\\s*(?:de\\s*la\\s*operaci[oó]n|debitado|transferido|del?\\s*pago|de\\s*la\\s*transferencia|de)?|importe|por\\s+la\\s+cantidad\\s+de|por\\s+la\\s+suma\\s+de|por\\s+un\\s+monto\\s+de|monto\\s*\\(?\\s*(?:Bs|VES|USD|\\$)?\\s*\\)?)\\s*:?\\s*(?:Bs\\.?|VES|Bs\\.S|USD|\\$)?\\s*${numPattern}`,
     "i"
