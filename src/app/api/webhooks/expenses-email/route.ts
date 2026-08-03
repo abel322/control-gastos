@@ -30,37 +30,46 @@ function stripHtml(html: string): string {
 // Helper to clean raw numeric strings (e.g. "1.500,00", "15.000", "15000,50", "45000", "600,00") into floats
 function cleanAndParseNumber(str: string): number | null {
   if (!str) return null;
+  const originalStr = str;
   let s = str.trim();
+
   // Strip currency prefixes and suffixes
   s = s.replace(/^(?:Bs\.?|VES|Bs\.S|USD|\$)\s*/i, "").replace(/\s*(?:Bs\.?|VES|Bs\.S|USD|\$)$/i, "").trim();
   if (!s) return null;
 
-  // Handle Venezuelan numeric format (dots as thousand separators, comma as decimal separator) vs US format
+  let cleanedStr = s;
+
+  // 1. Formato Venezolano / Internacional con comas y puntos (ej: "1.500,00" o "1,500.00")
   if (s.includes(",") && s.includes(".")) {
     const lastComma = s.lastIndexOf(",");
     const lastDot = s.lastIndexOf(".");
     if (lastComma > lastDot) {
-      // 1.500,00 -> 1500.00
-      s = s.replace(/\./g, "").replace(",", ".");
+      // Formato Venezolano: Puntos = miles, Coma = decimal (ej: "1.500,00" -> "1500.00")
+      cleanedStr = s.replace(/\./g, "").replace(",", ".");
     } else {
-      // 1,500.00 -> 1500.00
-      s = s.replace(/,/g, "");
+      // Formato US: Comas = miles, Punto = decimal (ej: "1,500.00" -> "1500.00")
+      cleanedStr = s.replace(/,/g, "");
     }
-  } else if (s.includes(",")) {
-    // 350,50 or 15000,00 -> 350.50 or 15000.00
-    s = s.replace(",", ".");
-  } else if (s.includes(".")) {
-    // 15.000 or 1.500.000 (dots as thousand separators without decimal comma)
+  }
+  // 2. Formato con coma decimal sin puntos (ej: "1500,00" o "350,50")
+  else if (s.includes(",")) {
+    cleanedStr = s.replace(",", ".");
+  }
+  // 3. Formato con punto sin coma (ej: "1.500", "15.000", "1.500.000" vs "1500.00")
+  else if (s.includes(".")) {
+    // Si tiene estructura de separador de miles venezolano (ej: 1.500 o 15.000) -> eliminar puntos
     if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
-      s = s.replace(/\./g, "");
+      cleanedStr = s.replace(/\./g, "");
     }
+    // Si es un decimal estándar con punto (ej: 1500.00 o 150.5), se mantiene
   }
 
-  const num = parseFloat(s);
-  if (!isNaN(num) && num > 0) {
-    return num;
-  }
-  return null;
+  const num = parseFloat(cleanedStr);
+  const result = !isNaN(num) && num > 0 ? num : null;
+
+  console.log("Número original:", originalStr, "-> Convertido:", result);
+
+  return result;
 }
 
 // Helper to extract amount directly from HTML tables (e.g., Mercantil, Bancamiga, etc.)
