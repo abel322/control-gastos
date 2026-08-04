@@ -82,6 +82,7 @@ model Expense {
   exchangeRate     Float
   equivalentAmount Float
   source           String   @default("MANUAL") // "MANUAL" or "AUTOMATIC"
+  reference        String?
   date             DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

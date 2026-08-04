@@ -15,12 +15,14 @@ import {
   ChevronDown,
   Info,
   Pencil,
-  Trash2
+  Trash2,
+  FileUp
 } from "lucide-react";
 import { formatVES, formatUSD } from "@/lib/format";
 import ExpenseModal from "./ExpenseModal";
+import ImportStatementModal from "@/components/ImportStatementModal";
 import WeeklyIncome from "./WeeklyIncome";
-import { createExpenseAction, updateExpenseAction, deleteExpenseAction } from "@/app/(dashboard)/actions";
+import { createExpenseAction, updateExpenseAction, deleteExpenseAction, getExpenses } from "@/app/(dashboard)/actions";
 import clsx from "clsx";
 
 interface Category {
@@ -62,7 +64,17 @@ export default function ExpensesClient({
 }: ExpensesClientProps) {
   const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [expenseToEdit, setExpenseToEdit] = useState<Expense | null>(null);
+
+  async function handleImportSuccess() {
+    try {
+      const updated = await getExpenses();
+      setExpenses(updated as any);
+    } catch (err) {
+      console.error("Error refreshing expenses after import:", err);
+    }
+  }
   
   // Search and filter states
   const [searchTerm, setSearchTerm] = useState("");
@@ -245,6 +257,13 @@ export default function ExpensesClient({
           </div>
           
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 shadow-sm hover:bg-purple-100 transition-all active:scale-98"
+            >
+              <FileUp className="h-4 w-4 text-purple-600" />
+              <span>Importar Estado de Cuenta</span>
+            </button>
             <button
               onClick={handleExport}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50 transition-all active:scale-98"
@@ -574,6 +593,13 @@ export default function ExpensesClient({
               }
             : null
         }
+      />
+
+      {/* Import Statement Modal */}
+      <ImportStatementModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={handleImportSuccess}
       />
       
       {/* Styles for slide down and fade in animations */}
