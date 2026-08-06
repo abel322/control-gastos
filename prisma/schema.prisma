@@ -137,6 +137,7 @@ model FixedExpense {
   amount      Float
   currency    String   // "USD" or "VES"
   frequency   String   // "WEEKLY" or "MONTHLY"
+  type        String   @default("RECURRING") // "RECURRING" or "ONE_TIME"
   isPaid      Boolean  @default(false)
   dueDate     DateTime?
   createdAt   DateTime @default(now())

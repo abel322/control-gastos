@@ -16,6 +16,7 @@ export interface InitialFixedData {
   amount: number;
   currency: "USD" | "VES";
   frequency: "WEEKLY" | "MONTHLY";
+  type?: "RECURRING" | "ONE_TIME";
   categoryId: string;
   dueDate?: string | Date | null;
 }
@@ -29,6 +30,7 @@ interface FixedExpenseModalProps {
     amount: number;
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
+    type: "RECURRING" | "ONE_TIME";
     categoryId: string;
     dueDate?: string;
   }) => Promise<void>;
@@ -48,6 +50,7 @@ export default function FixedExpenseModal({
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<"USD" | "VES">("USD");
   const [frequency, setFrequency] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
+  const [type, setType] = useState<"RECURRING" | "ONE_TIME">("RECURRING");
   const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
   const [dueDate, setDueDate] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,6 +65,7 @@ export default function FixedExpenseModal({
         setAmount(initialData.amount.toString());
         setCurrency(initialData.currency);
         setFrequency(initialData.frequency);
+        setType(initialData.type || "RECURRING");
         setCategoryId(initialData.categoryId || categories[0]?.id || "");
         setDueDate(
           initialData.dueDate
@@ -73,6 +77,7 @@ export default function FixedExpenseModal({
         setAmount("");
         setCurrency("USD");
         setFrequency("WEEKLY");
+        setType("RECURRING");
         setCategoryId(categories[0]?.id || "");
         setDueDate(
           defaultDueDate
@@ -128,6 +133,11 @@ export default function FixedExpenseModal({
       return;
     }
 
+    if (type === "ONE_TIME" && !dueDate) {
+      setError("Por favor, selecciona una fecha o semana de vencimiento para el pago puntual.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await onSubmit({
@@ -135,6 +145,7 @@ export default function FixedExpenseModal({
         amount: numericAmount,
         currency,
         frequency,
+        type,
         categoryId,
         dueDate: dueDate || undefined,
       });
@@ -162,8 +173,8 @@ export default function FixedExpenseModal({
             </h3>
             <p className="text-xs text-gray-500 mt-0.5">
               {initialData
-                ? "Modifica los detalles de este compromiso recurrente"
-                : "Registra tus pagos recurrentes obligatorios semanales o mensuales"}
+                ? "Modifica los detalles de este compromiso recurrente o puntual"
+                : "Registra tus pagos recurrentes u obligatorios por fecha/semana"}
             </p>
           </div>
           <button
@@ -183,6 +194,40 @@ export default function FixedExpenseModal({
             </div>
           )}
 
+          {/* Type Selector (Recurrente vs Pago Puntual) */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Tipo de Compromiso
+            </label>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setType("RECURRING")}
+                className={`py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
+                  type === "RECURRING"
+                    ? "bg-white text-primary shadow-xs border border-gray-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <span>🔄 Plantilla Recurrente</span>
+                <span className="text-[10px] font-normal text-gray-500">Se repite todas las semanas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setType("ONE_TIME")}
+                className={`py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
+                  type === "ONE_TIME"
+                    ? "bg-white text-purple-700 shadow-xs border border-gray-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <span>📌 Pago Puntual / Cuota</span>
+                <span className="text-[10px] font-normal text-gray-500">Asignado a fecha específica</span>
+              </button>
+            </div>
+          </div>
+
           {/* Description */}
           <div className="space-y-1.5">
             <label htmlFor="description" className="text-xs font-semibold uppercase tracking-wider text-gray-500">
@@ -191,7 +236,7 @@ export default function FixedExpenseModal({
             <input
               id="description"
               type="text"
-              placeholder="Ej. Mercado Semanal, Internet Inter, Condominio..."
+              placeholder={type === "ONE_TIME" ? "Ej. Cuota Cashea 2/3, Reparación auto..." : "Ej. Mercado Semanal, Internet Inter..."}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-gray-900"
@@ -199,6 +244,27 @@ export default function FixedExpenseModal({
               autoFocus
             />
           </div>
+
+          {/* Conditional Date Picker for ONE_TIME */}
+          {type === "ONE_TIME" && (
+            <div className="space-y-1.5 bg-purple-50/60 border border-purple-100 rounded-xl p-3">
+              <label htmlFor="dueDate" className="text-xs font-bold uppercase tracking-wider text-purple-900 flex items-center gap-1">
+                <CalendarDays className="h-4 w-4 text-purple-600" />
+                <span>Fecha / Semana de Vencimiento</span>
+              </label>
+              <input
+                id="dueDate"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full rounded-xl border border-purple-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-900 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200 transition-all"
+                required
+              />
+              <p className="text-[11px] text-purple-700">
+                Este gasto solo aparecerá en la lista cuando se navegue a la semana que incluya esta fecha.
+              </p>
+            </div>
+          )}
 
           {/* Frequency & Category Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -49,6 +49,7 @@ interface FixedExpenseItem {
   amount: number;
   currency: string; // "USD" | "VES"
   frequency: string; // "WEEKLY" | "MONTHLY"
+  type?: string; // "RECURRING" | "ONE_TIME"
   isPaid: boolean;
   dueDate?: Date | string | null;
   categoryId: string;
@@ -157,6 +158,7 @@ export default function FixedExpensesClient({
     amount: number;
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
+    type: "RECURRING" | "ONE_TIME";
     categoryId: string;
     dueDate?: string;
   }) => {
@@ -175,6 +177,7 @@ export default function FixedExpensesClient({
                 amount: data.amount,
                 currency: data.currency,
                 frequency: data.frequency,
+                type: data.type,
                 categoryId: data.categoryId,
                 dueDate: data.dueDate ? new Date(data.dueDate) : e.dueDate,
                 category:
@@ -204,6 +207,7 @@ export default function FixedExpensesClient({
           amount: res.fixedExpense.amount,
           currency: res.fixedExpense.currency,
           frequency: res.fixedExpense.frequency,
+          type: (res.fixedExpense as any).type || data.type,
           isPaid: res.fixedExpense.isPaid,
           dueDate: res.fixedExpense.dueDate,
           categoryId: res.fixedExpense.categoryId,
@@ -489,6 +493,7 @@ export default function FixedExpensesClient({
           <div className="divide-y divide-gray-100">
             {activeItems.map((item) => {
               const isPaid = item.isPaid;
+              const isOneTime = item.type === "ONE_TIME";
               // Resolve matching category details for correct icon and color
               const cat =
                 categories.find((c) => c.id === item.categoryId) ||
@@ -537,7 +542,7 @@ export default function FixedExpensesClient({
 
                     {/* Text Details */}
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <h4
                           className={clsx(
                             "text-sm font-bold text-gray-900 transition-all",
@@ -546,6 +551,8 @@ export default function FixedExpensesClient({
                         >
                           {item.description}
                         </h4>
+                        
+                        {/* Status Badge */}
                         <span
                           className={clsx(
                             "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider",
@@ -566,9 +573,26 @@ export default function FixedExpensesClient({
                             </>
                           )}
                         </span>
+
+                        {/* Type Badge */}
+                        <span
+                          className={clsx(
+                            "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border",
+                            isOneTime
+                              ? "bg-purple-50 border-purple-200 text-purple-700"
+                              : "bg-blue-50 border-blue-200 text-blue-700"
+                          )}
+                        >
+                          {isOneTime ? "📌 Puntual" : "🔄 Recurrente"}
+                        </span>
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         Categoría: <span className="font-medium text-gray-700">{catName}</span>
+                        {isOneTime && item.dueDate && (
+                          <span className="ml-2 text-purple-600 font-medium">
+                            • Vence: {new Date(item.dueDate).toLocaleDateString("es-VE")}
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -629,6 +653,7 @@ export default function FixedExpensesClient({
         }}
         categories={categories}
         onSubmit={handleModalSubmit}
+        defaultDueDate={currentWeekStart}
         initialData={
           editingItem
             ? {
@@ -637,7 +662,9 @@ export default function FixedExpensesClient({
                 amount: editingItem.amount,
                 currency: editingItem.currency as "USD" | "VES",
                 frequency: editingItem.frequency as "WEEKLY" | "MONTHLY",
+                type: (editingItem.type as "RECURRING" | "ONE_TIME") || "RECURRING",
                 categoryId: editingItem.categoryId,
+                dueDate: editingItem.dueDate,
               }
             : null
         }

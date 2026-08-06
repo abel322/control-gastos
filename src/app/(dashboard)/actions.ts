@@ -953,6 +953,10 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
     const weekStart = new Date(d.setDate(diff));
     weekStart.setHours(0, 0, 0, 0);
 
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+
     const [fixedExpenses, logs] = await Promise.all([
       prisma.fixedExpense.findMany({
         where: { userId },
@@ -975,8 +979,22 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
       logMap.set(log.fixedExpenseId, log.isPaid);
     });
 
-    return fixedExpenses.map((expense) => ({
+    const filteredExpenses = fixedExpenses.filter((expense) => {
+      const itemType = expense.type || "RECURRING";
+      if (itemType === "ONE_TIME") {
+        // Must have dueDate (or createdAt) inside the selected week range [weekStart, weekEnd]
+        const dateToCheck = expense.dueDate
+          ? new Date(expense.dueDate)
+          : new Date(expense.createdAt);
+        return dateToCheck >= weekStart && dateToCheck <= weekEnd;
+      }
+      // RECURRING items are always included
+      return true;
+    });
+
+    return filteredExpenses.map((expense) => ({
       ...expense,
+      type: expense.type || "RECURRING",
       isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
     }));
   } catch (error) {
@@ -988,6 +1006,7 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
         amount: 60.0,
         currency: "USD",
         frequency: "WEEKLY",
+        type: "RECURRING",
         isPaid: true,
         categoryId: "1",
         category: { name: "Alimentación", icon: "🍔", color: "#f59e0b" },
@@ -1000,6 +1019,7 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
         amount: 35.0,
         currency: "USD",
         frequency: "MONTHLY",
+        type: "RECURRING",
         isPaid: false,
         categoryId: "7",
         category: { name: "Servicios", icon: "💡", color: "#f97316" },
@@ -1012,6 +1032,7 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
         amount: 45.0,
         currency: "USD",
         frequency: "MONTHLY",
+        type: "RECURRING",
         isPaid: false,
         categoryId: "3",
         category: { name: "Vivienda", icon: "🏠", color: "#8b5cf6" },
@@ -1038,6 +1059,7 @@ export async function createFixedExpense(data: {
   currency: string;
   frequency: string;
   categoryId: string;
+  type?: string;
   dueDate?: string;
 }) {
   try {
@@ -1046,7 +1068,7 @@ export async function createFixedExpense(data: {
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const { description, amount, currency, frequency, categoryId, dueDate } = data;
+    const { description, amount, currency, frequency, categoryId, type, dueDate } = data;
     if (!description || !amount || !currency || !frequency || !categoryId) {
       return { error: "Campos obligatorios faltantes" };
     }
@@ -1059,6 +1081,7 @@ export async function createFixedExpense(data: {
         frequency,
         categoryId,
         userId,
+        type: type || "RECURRING",
         isPaid: false,
         dueDate: dueDate ? new Date(dueDate) : null,
       },
@@ -1094,6 +1117,7 @@ export async function createFixedExpense(data: {
       amount: data.amount,
       currency: data.currency,
       frequency: data.frequency,
+      type: data.type || "RECURRING",
       isPaid: false,
       dueDate: data.dueDate ? new Date(data.dueDate) : null,
       categoryId: data.categoryId,
@@ -1206,6 +1230,8 @@ export async function updateFixedExpense(
     currency: string;
     frequency: string;
     categoryId: string;
+    type?: string;
+    dueDate?: string;
   }
 ) {
   try {
@@ -1214,7 +1240,7 @@ export async function updateFixedExpense(
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const { description, amount, currency, frequency, categoryId } = data;
+    const { description, amount, currency, frequency, categoryId, type, dueDate } = data;
     if (!description || !amount || !currency || !frequency || !categoryId) {
       return { error: "Campos obligatorios faltantes" };
     }
@@ -1232,6 +1258,8 @@ export async function updateFixedExpense(
         currency,
         frequency,
         categoryId,
+        type: type || "RECURRING",
+        dueDate: dueDate ? new Date(dueDate) : null,
       },
       include: {
         category: true,
@@ -1264,7 +1292,9 @@ export async function updateFixedExpense(
       amount: data.amount,
       currency: data.currency,
       frequency: data.frequency,
+      type: data.type || "RECURRING",
       isPaid: false,
+      dueDate: data.dueDate ? new Date(data.dueDate) : null,
       categoryId: data.categoryId,
       category: { name: matchedCat.name, icon: matchedCat.icon, color: matchedCat.color },
       createdAt: new Date(),
