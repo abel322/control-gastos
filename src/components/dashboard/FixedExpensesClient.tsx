@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { formatUSD, formatVES } from "@/lib/format";
 import {
   Plus,
@@ -13,14 +13,27 @@ import {
   PiggyBank,
   Check,
   Zap,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
 } from "lucide-react";
 import clsx from "clsx";
+import {
+  startOfWeek,
+  endOfWeek,
+  subWeeks,
+  addWeeks,
+  format,
+  isSameWeek,
+} from "date-fns";
+import { es } from "date-fns/locale";
 import FixedExpenseModal, { InitialFixedData } from "./FixedExpenseModal";
 import {
   createFixedExpense,
   updateFixedExpense,
-  togglePaidStatus,
+  togglePaidStatusForWeek,
   deleteFixedExpense,
+  getFixedExpensesForWeek,
 } from "@/app/(dashboard)/actions";
 
 interface Category {
@@ -37,6 +50,7 @@ interface FixedExpenseItem {
   currency: string; // "USD" | "VES"
   frequency: string; // "WEEKLY" | "MONTHLY"
   isPaid: boolean;
+  dueDate?: Date | string | null;
   categoryId: string;
   category?: Category;
   createdAt?: Date | string;
@@ -58,6 +72,44 @@ export default function FixedExpensesClient({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FixedExpenseItem | null>(null);
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
+
+  // 1. Estado de Navegación de Fecha (React State)
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
+    startOfWeek(new Date(), { weekStartsOn: 1 })
+  );
+
+  const handlePrevWeek = () => {
+    setCurrentWeekStart((prev) => subWeeks(prev, 1));
+  };
+
+  const handleNextWeek = () => {
+    setCurrentWeekStart((prev) => addWeeks(prev, 1));
+  };
+
+  const handleResetToCurrentWeek = () => {
+    setCurrentWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  };
+
+  // Cargar datos al cambiar de semana
+  useEffect(() => {
+    let isMounted = true;
+    async function loadWeekData() {
+      try {
+        const weekExpenses = await getFixedExpensesForWeek(
+          currentWeekStart.toISOString()
+        );
+        if (isMounted && Array.isArray(weekExpenses)) {
+          setExpenses(weekExpenses as any);
+        }
+      } catch (err) {
+        console.error("Error loading week data:", err);
+      }
+    }
+    loadWeekData();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentWeekStart]);
 
   // Helper to convert item amount to USD and VES
   const getItemUSD = (item: FixedExpenseItem) =>
@@ -81,6 +133,15 @@ export default function FixedExpensesClient({
   const activeItems = activeTab === "WEEKLY" ? weeklyItems : monthlyItems;
   const paidCount = activeItems.filter((i) => i.isPaid).length;
 
+  // Rango de la semana activa formateado
+  const weekEnd = endOfWeek(currentWeekStart, { weekStartsOn: 1 });
+  const isCurrentWeek = isSameWeek(currentWeekStart, new Date(), {
+    weekStartsOn: 1,
+  });
+  const weekRangeLabel = `${format(currentWeekStart, "dd MMM", {
+    locale: es,
+  })} - ${format(weekEnd, "dd MMM", { locale: es })}`;
+
   const handleOpenCreateModal = () => {
     setEditingItem(null);
     setIsModalOpen(true);
@@ -97,6 +158,7 @@ export default function FixedExpensesClient({
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
     categoryId: string;
+    dueDate?: string;
   }) => {
     const matchedCategory = categories.find((c) => c.id === data.categoryId);
 
@@ -114,6 +176,7 @@ export default function FixedExpensesClient({
                 currency: data.currency,
                 frequency: data.frequency,
                 categoryId: data.categoryId,
+                dueDate: data.dueDate ? new Date(data.dueDate) : e.dueDate,
                 category:
                   matchedCategory ||
                   e.category || {
@@ -130,7 +193,10 @@ export default function FixedExpensesClient({
       }
     } else {
       // Create new fixed expense
-      const res = await createFixedExpense(data);
+      const res = await createFixedExpense({
+        ...data,
+        dueDate: data.dueDate || currentWeekStart.toISOString(),
+      });
       if (res.success && res.fixedExpense) {
         const newItem: FixedExpenseItem = {
           id: res.fixedExpense.id,
@@ -139,6 +205,7 @@ export default function FixedExpensesClient({
           currency: res.fixedExpense.currency,
           frequency: res.fixedExpense.frequency,
           isPaid: res.fixedExpense.isPaid,
+          dueDate: res.fixedExpense.dueDate,
           categoryId: res.fixedExpense.categoryId,
           category:
             (res.fixedExpense as any).category ||
@@ -166,7 +233,11 @@ export default function FixedExpensesClient({
     );
 
     try {
-      await togglePaidStatus(id, newPaidState);
+      await togglePaidStatusForWeek(
+        id,
+        newPaidState,
+        currentWeekStart.toISOString()
+      );
     } catch {
       // Revert if error
       setExpenses((prev) =>
@@ -296,6 +367,53 @@ export default function FixedExpensesClient({
 
       {/* Main Content Area */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        {/* 2. Componente Selector de Semana (UI Header de la Tabla) */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-gray-200 px-6 py-4 bg-gradient-to-r from-purple-50/40 via-white to-gray-50/40">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-primary" />
+            <span className="text-sm font-bold text-gray-900">
+              Control de Gastos por Semana
+            </span>
+          </div>
+
+          {/* Centered Navigation Controls */}
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5 shadow-sm">
+            <button
+              onClick={handlePrevWeek}
+              className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95"
+              title="Semana anterior"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <span className="text-sm font-extrabold text-gray-900 min-w-[130px] text-center capitalize px-2">
+              {weekRangeLabel}
+            </span>
+
+            <button
+              onClick={handleNextWeek}
+              className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95"
+              title="Semana siguiente"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!isCurrentWeek ? (
+            <button
+              onClick={handleResetToCurrentWeek}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 bg-primary/10 px-3 py-1.5 rounded-lg transition-all"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Semana Actual</span>
+            </button>
+          ) : (
+            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1 rounded-full">
+              Semana en curso
+            </span>
+          )}
+        </div>
+
         {/* Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-100 p-4 sm:p-6 bg-gray-50/50">
           {/* Tabs */}

@@ -17,6 +17,7 @@ export interface InitialFixedData {
   currency: "USD" | "VES";
   frequency: "WEEKLY" | "MONTHLY";
   categoryId: string;
+  dueDate?: string | Date | null;
 }
 
 interface FixedExpenseModalProps {
@@ -29,8 +30,10 @@ interface FixedExpenseModalProps {
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
     categoryId: string;
+    dueDate?: string;
   }) => Promise<void>;
   initialData?: InitialFixedData | null;
+  defaultDueDate?: Date;
 }
 
 export default function FixedExpenseModal({
@@ -39,12 +42,14 @@ export default function FixedExpenseModal({
   categories,
   onSubmit,
   initialData,
+  defaultDueDate,
 }: FixedExpenseModalProps) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<"USD" | "VES">("USD");
   const [frequency, setFrequency] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
   const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
+  const [dueDate, setDueDate] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,16 +63,26 @@ export default function FixedExpenseModal({
         setCurrency(initialData.currency);
         setFrequency(initialData.frequency);
         setCategoryId(initialData.categoryId || categories[0]?.id || "");
+        setDueDate(
+          initialData.dueDate
+            ? new Date(initialData.dueDate).toISOString().split("T")[0]
+            : ""
+        );
       } else {
         setDescription("");
         setAmount("");
         setCurrency("USD");
         setFrequency("WEEKLY");
         setCategoryId(categories[0]?.id || "");
+        setDueDate(
+          defaultDueDate
+            ? defaultDueDate.toISOString().split("T")[0]
+            : new Date().toISOString().split("T")[0]
+        );
       }
       setError(null);
     }
-  }, [isOpen, categories, initialData]);
+  }, [isOpen, categories, initialData, defaultDueDate]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -121,6 +136,7 @@ export default function FixedExpenseModal({
         currency,
         frequency,
         categoryId,
+        dueDate: dueDate || undefined,
       });
       onClose();
     } catch (err: any) {

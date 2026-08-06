@@ -936,25 +936,51 @@ export async function deleteIncomeAction(id: string) {
 // =============================================
 
 /**
- * Get all fixed expenses for the current user.
+ * Get all fixed expenses for the current user for a given week.
  */
-export async function getFixedExpenses() {
+export async function getFixedExpensesForWeek(weekStartIso?: string) {
   try {
     const userId = await getUserId();
     if (!userId) {
       throw new Error("No autorizado");
     }
 
-    const fixedExpenses = await prisma.fixedExpense.findMany({
-      where: { userId },
-      include: { category: true },
-      orderBy: { createdAt: "desc" },
+    const targetDate = weekStartIso ? new Date(weekStartIso) : new Date();
+    // Normalize targetDate to Monday 00:00:00 UTC/Local
+    const d = new Date(targetDate);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const weekStart = new Date(d.setDate(diff));
+    weekStart.setHours(0, 0, 0, 0);
+
+    const [fixedExpenses, logs] = await Promise.all([
+      prisma.fixedExpense.findMany({
+        where: { userId },
+        include: { category: true },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.fixedExpenseLog.findMany({
+        where: {
+          userId,
+          weekStart: {
+            gte: new Date(weekStart.getTime() - 12 * 60 * 60 * 1000),
+            lte: new Date(weekStart.getTime() + 36 * 60 * 60 * 1000),
+          },
+        },
+      }),
+    ]);
+
+    const logMap = new Map<string, boolean>();
+    logs.forEach((log) => {
+      logMap.set(log.fixedExpenseId, log.isPaid);
     });
 
-    return fixedExpenses;
+    return fixedExpenses.map((expense) => ({
+      ...expense,
+      isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
+    }));
   } catch (error) {
-    console.error("Error fetching fixed expenses:", error);
-    // Mock data fallback if DB fails or demo mode
+    console.error("Error fetching fixed expenses for week:", error);
     return [
       {
         id: "fe1",
@@ -997,6 +1023,13 @@ export async function getFixedExpenses() {
 }
 
 /**
+ * Get all fixed expenses for the current user (defaults to current week).
+ */
+export async function getFixedExpenses() {
+  return getFixedExpensesForWeek();
+}
+
+/**
  * Create a new fixed expense.
  */
 export async function createFixedExpense(data: {
@@ -1005,6 +1038,7 @@ export async function createFixedExpense(data: {
   currency: string;
   frequency: string;
   categoryId: string;
+  dueDate?: string;
 }) {
   try {
     const userId = await getUserId();
@@ -1012,7 +1046,7 @@ export async function createFixedExpense(data: {
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const { description, amount, currency, frequency, categoryId } = data;
+    const { description, amount, currency, frequency, categoryId, dueDate } = data;
     if (!description || !amount || !currency || !frequency || !categoryId) {
       return { error: "Campos obligatorios faltantes" };
     }
@@ -1026,6 +1060,7 @@ export async function createFixedExpense(data: {
         categoryId,
         userId,
         isPaid: false,
+        dueDate: dueDate ? new Date(dueDate) : null,
       },
       include: {
         category: true,
@@ -1060,6 +1095,7 @@ export async function createFixedExpense(data: {
       currency: data.currency,
       frequency: data.frequency,
       isPaid: false,
+      dueDate: data.dueDate ? new Date(data.dueDate) : null,
       categoryId: data.categoryId,
       category: { name: matchedCat.name, icon: matchedCat.icon, color: matchedCat.color },
       createdAt: new Date(),
@@ -1075,30 +1111,62 @@ export async function createFixedExpense(data: {
 }
 
 /**
- * Toggle paid status for a fixed expense.
+ * Toggle paid status for a fixed expense for a specific week.
  */
-export async function togglePaidStatus(id: string, isPaid: boolean) {
+export async function togglePaidStatusForWeek(id: string, isPaid: boolean, weekStartIso?: string) {
   try {
     const userId = await getUserId();
     if (!userId) {
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const updated = await prisma.fixedExpense.updateMany({
+    if (weekStartIso) {
+      const targetDate = new Date(weekStartIso);
+      const d = new Date(targetDate);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const weekStart = new Date(d.setDate(diff));
+      weekStart.setHours(0, 0, 0, 0);
+
+      await prisma.fixedExpenseLog.upsert({
+        where: {
+          fixedExpenseId_weekStart: {
+            fixedExpenseId: id,
+            weekStart,
+          },
+        },
+        create: {
+          fixedExpenseId: id,
+          weekStart,
+          isPaid,
+          paidAt: isPaid ? new Date() : null,
+          userId,
+        },
+        update: {
+          isPaid,
+          paidAt: isPaid ? new Date() : null,
+        },
+      });
+    }
+
+    await prisma.fixedExpense.updateMany({
       where: { id, userId },
       data: { isPaid },
     });
 
-    if (updated.count === 0) {
-      return { error: "Compromiso no encontrado o no autorizado." };
-    }
-
     revalidatePath("/budgets");
     return { success: true };
   } catch (error: any) {
-    console.error("Error toggling paid status:", error);
+    console.error("Error toggling paid status for week:", error);
     return { success: true, warning: "Estado cambiado (modo demo)." };
   }
+}
+
+/**
+ * Legacy toggle paid status alias.
+ */
+export async function togglePaidStatus(id: string, isPaid: boolean) {
+  return togglePaidStatusForWeek(id, isPaid);
 }
 
 /**

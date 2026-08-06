@@ -26,6 +26,7 @@ model User {
   incomes       Income[]
   budgets       Budget[]
   fixedExpenses FixedExpense[]
+  fixedExpenseLogs FixedExpenseLog[]
 }
 
 model Account {
@@ -137,6 +138,7 @@ model FixedExpense {
   currency    String   // "USD" or "VES"
   frequency   String   // "WEEKLY" or "MONTHLY"
   isPaid      Boolean  @default(false)
+  dueDate     DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -145,4 +147,22 @@ model FixedExpense {
 
   userId      String
   user        User     @relation(fields: [userId], references: [id])
+
+  logs        FixedExpenseLog[]
 }
+
+model FixedExpenseLog {
+  id             String       @id @default(cuid())
+  fixedExpenseId String
+  fixedExpense   FixedExpense @relation(fields: [fixedExpenseId], references: [id], onDelete: Cascade)
+  weekStart      DateTime
+  isPaid         Boolean      @default(true)
+  paidAt         DateTime?
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([fixedExpenseId, weekStart])
+}
+
