@@ -16,7 +16,7 @@ export interface InitialFixedData {
   amount: number;
   currency: "USD" | "VES";
   frequency: "WEEKLY" | "MONTHLY";
-  type?: "RECURRING" | "ONE_TIME";
+  type?: "RECURRING" | "ONE_TIME" | "INSTALLMENT";
   categoryId: string;
   dueDate?: string | Date | null;
 }
@@ -30,9 +30,12 @@ interface FixedExpenseModalProps {
     amount: number;
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
-    type: "RECURRING" | "ONE_TIME";
+    type: "RECURRING" | "ONE_TIME" | "INSTALLMENT";
     categoryId: string;
     dueDate?: string;
+    startDate?: string;
+    installmentFrequency?: "BIWEEKLY" | "MONTHLY";
+    totalInstallments?: number;
   }) => Promise<void>;
   initialData?: InitialFixedData | null;
   defaultDueDate?: Date;
@@ -50,9 +53,15 @@ export default function FixedExpenseModal({
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<"USD" | "VES">("USD");
   const [frequency, setFrequency] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
-  const [type, setType] = useState<"RECURRING" | "ONE_TIME">("RECURRING");
+  const [type, setType] = useState<"RECURRING" | "ONE_TIME" | "INSTALLMENT">("RECURRING");
   const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
   const [dueDate, setDueDate] = useState<string>("");
+
+  // Installment specific state
+  const [startDate, setStartDate] = useState<string>("");
+  const [installmentFrequency, setInstallmentFrequency] = useState<"BIWEEKLY" | "MONTHLY">("BIWEEKLY");
+  const [totalInstallments, setTotalInstallments] = useState<string>("3");
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,18 +69,20 @@ export default function FixedExpenseModal({
 
   useEffect(() => {
     if (isOpen) {
+      const todayIso = (defaultDueDate || new Date()).toISOString().split("T")[0];
       if (initialData) {
         setDescription(initialData.description);
         setAmount(initialData.amount.toString());
         setCurrency(initialData.currency);
         setFrequency(initialData.frequency);
-        setType(initialData.type || "RECURRING");
+        setType((initialData.type as any) || "RECURRING");
         setCategoryId(initialData.categoryId || categories[0]?.id || "");
         setDueDate(
           initialData.dueDate
             ? new Date(initialData.dueDate).toISOString().split("T")[0]
-            : ""
+            : todayIso
         );
+        setStartDate(todayIso);
       } else {
         setDescription("");
         setAmount("");
@@ -79,11 +90,10 @@ export default function FixedExpenseModal({
         setFrequency("WEEKLY");
         setType("RECURRING");
         setCategoryId(categories[0]?.id || "");
-        setDueDate(
-          defaultDueDate
-            ? defaultDueDate.toISOString().split("T")[0]
-            : new Date().toISOString().split("T")[0]
-        );
+        setDueDate(todayIso);
+        setStartDate(todayIso);
+        setInstallmentFrequency("BIWEEKLY");
+        setTotalInstallments("3");
       }
       setError(null);
     }
@@ -138,6 +148,19 @@ export default function FixedExpenseModal({
       return;
     }
 
+    let parsedInstallments = 1;
+    if (type === "INSTALLMENT") {
+      parsedInstallments = parseInt(totalInstallments, 10);
+      if (isNaN(parsedInstallments) || parsedInstallments <= 0) {
+        setError("Ingresa un número válido de cuotas (ej. 3, 6, 12).");
+        return;
+      }
+      if (!startDate) {
+        setError("Por favor, selecciona la fecha de inicio de la primera cuota.");
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       await onSubmit({
@@ -148,6 +171,9 @@ export default function FixedExpenseModal({
         type,
         categoryId,
         dueDate: dueDate || undefined,
+        startDate: startDate || undefined,
+        installmentFrequency,
+        totalInstallments: parsedInstallments,
       });
       onClose();
     } catch (err: any) {
@@ -158,6 +184,9 @@ export default function FixedExpenseModal({
   }
 
   const selectedCategory = categories.find((c) => c.id === categoryId);
+  const numAmount = parseFloat(amount) || 0;
+  const numInstallments = parseInt(totalInstallments, 10) || 1;
+  const perInstallmentAmount = numAmount > 0 && numInstallments > 0 ? numAmount / numInstallments : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm transition-all duration-300">
@@ -174,7 +203,7 @@ export default function FixedExpenseModal({
             <p className="text-xs text-gray-500 mt-0.5">
               {initialData
                 ? "Modifica los detalles de este compromiso recurrente o puntual"
-                : "Registra tus pagos recurrentes u obligatorios por fecha/semana"}
+                : "Registra pagos recurrentes, puntuales o financiamientos por cuotas (Cashea)"}
             </p>
           </div>
           <button
@@ -194,36 +223,49 @@ export default function FixedExpenseModal({
             </div>
           )}
 
-          {/* Type Selector (Recurrente vs Pago Puntual) */}
+          {/* Type Selector (Recurrente vs Pago Puntual vs Deuda/Cuotas) */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">
               Tipo de Compromiso
             </label>
-            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-xl">
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-gray-100 rounded-xl">
               <button
                 type="button"
                 onClick={() => setType("RECURRING")}
-                className={`py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
                   type === "RECURRING"
                     ? "bg-white text-primary shadow-xs border border-gray-200"
                     : "text-gray-600 hover:text-gray-900"
                 }`}
               >
-                <span>🔄 Plantilla Recurrente</span>
-                <span className="text-[10px] font-normal text-gray-500">Se repite todas las semanas</span>
+                <span>🔄 Recurrente</span>
+                <span className="text-[9px] font-normal text-gray-500">Todas las semanas</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setType("ONE_TIME")}
-                className={`py-2.5 px-3 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
                   type === "ONE_TIME"
                     ? "bg-white text-purple-700 shadow-xs border border-gray-200"
                     : "text-gray-600 hover:text-gray-900"
                 }`}
               >
-                <span>📌 Pago Puntual / Cuota</span>
-                <span className="text-[10px] font-normal text-gray-500">Asignado a fecha específica</span>
+                <span>📌 Puntual</span>
+                <span className="text-[9px] font-normal text-gray-500">Una fecha exacta</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setType("INSTALLMENT")}
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition-all text-center flex flex-col items-center gap-0.5 ${
+                  type === "INSTALLMENT"
+                    ? "bg-white text-emerald-700 shadow-xs border border-gray-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <span>💳 Cuotas (Cashea)</span>
+                <span className="text-[9px] font-normal text-gray-500">Financiamiento</span>
               </button>
             </div>
           </div>
@@ -236,7 +278,13 @@ export default function FixedExpenseModal({
             <input
               id="description"
               type="text"
-              placeholder={type === "ONE_TIME" ? "Ej. Cuota Cashea 2/3, Reparación auto..." : "Ej. Mercado Semanal, Internet Inter..."}
+              placeholder={
+                type === "INSTALLMENT"
+                  ? "Ej. Zapatos Zara, Teléfono Cashea..."
+                  : type === "ONE_TIME"
+                  ? "Ej. Reparación auto, Cuota escolar..."
+                  : "Ej. Mercado Semanal, Internet Inter..."
+              }
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm placeholder-gray-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-gray-900"
@@ -244,6 +292,85 @@ export default function FixedExpenseModal({
               autoFocus
             />
           </div>
+
+          {/* Conditional Fields for INSTALLMENT (Cashea) */}
+          {type === "INSTALLMENT" && (
+            <div className="space-y-4 bg-emerald-50/60 border border-emerald-100 rounded-xl p-4">
+              <div className="text-xs font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                <CreditCard className="h-4 w-4 text-emerald-600" />
+                <span>Configuración de Financiamiento en Cuotas</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label htmlFor="startDate" className="text-xs font-medium text-emerald-900">
+                    Fecha 1ra Cuota
+                  </label>
+                  <input
+                    id="startDate"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="totalInstallments" className="text-xs font-medium text-emerald-900">
+                    Número de Cuotas
+                  </label>
+                  <input
+                    id="totalInstallments"
+                    type="number"
+                    min="1"
+                    max="48"
+                    value={totalInstallments}
+                    onChange={(e) => setTotalInstallments(e.target.value)}
+                    className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-emerald-900">
+                  Frecuencia de las Cuotas
+                </label>
+                <div className="flex h-9 items-center rounded-xl border border-emerald-200 bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setInstallmentFrequency("BIWEEKLY")}
+                    className={`flex-1 rounded-lg py-1 text-xs font-bold transition-all ${
+                      installmentFrequency === "BIWEEKLY"
+                        ? "bg-emerald-600 text-white shadow-xs"
+                        : "text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    Cada 15 Días (Quincenal)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInstallmentFrequency("MONTHLY")}
+                    className={`flex-1 rounded-lg py-1 text-xs font-bold transition-all ${
+                      installmentFrequency === "MONTHLY"
+                        ? "bg-emerald-600 text-white shadow-xs"
+                        : "text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    Cada Mes (Mensual)
+                  </button>
+                </div>
+              </div>
+
+              {numAmount > 0 && numInstallments > 0 && (
+                <div className="rounded-lg bg-emerald-100/70 p-2.5 text-xs text-emerald-900 font-medium">
+                  Se generarán <span className="font-bold">{numInstallments} cuotas</span> de{" "}
+                  <span className="font-bold font-mono">${perInstallmentAmount.toFixed(2)}</span> cada una.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Conditional Date Picker for ONE_TIME */}
           {type === "ONE_TIME" && (

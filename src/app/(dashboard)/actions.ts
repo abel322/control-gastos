@@ -981,7 +981,7 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
 
     const filteredExpenses = fixedExpenses.filter((expense) => {
       const itemType = expense.type || "RECURRING";
-      if (itemType === "ONE_TIME") {
+      if (itemType === "ONE_TIME" || itemType === "INSTALLMENT") {
         // Must have dueDate (or createdAt) inside the selected week range [weekStart, weekEnd]
         const dateToCheck = expense.dueDate
           ? new Date(expense.dueDate)
@@ -1040,6 +1040,123 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
         updatedAt: new Date(),
       },
     ];
+  }
+}
+
+/**
+ * Get income sum for a given week range (or weekly estimate).
+ */
+export async function getWeeklyIncomeUSD(weekStartIso?: string): Promise<number> {
+  try {
+    const userId = await getUserId();
+    if (!userId) return 0;
+
+    const currentRate = await getLatestExchangeRate();
+
+    if (weekStartIso) {
+      const targetDate = new Date(weekStartIso);
+      const d = new Date(targetDate);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const weekStart = new Date(d.setDate(diff));
+      weekStart.setHours(0, 0, 0, 0);
+
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+
+      const incomes = await prisma.income.findMany({
+        where: {
+          userId,
+          date: {
+            gte: weekStart,
+            lte: weekEnd,
+          },
+        },
+      });
+
+      if (incomes.length > 0) {
+        return incomes.reduce((sum, inc) => {
+          return sum + (inc.currency === "USD" ? inc.amount : inc.amount / currentRate);
+        }, 0);
+      }
+    }
+
+    const totalUSD = await getTotalIncomeUSD();
+    return totalUSD > 0 ? totalUSD / 4 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Create multiple installment fixed expense records (e.g. Cashea).
+ */
+export async function createInstallmentExpense(data: {
+  description: string;
+  totalAmount: number;
+  currency: string;
+  categoryId: string;
+  startDate: string;
+  installmentFrequency: "BIWEEKLY" | "MONTHLY";
+  totalInstallments: number;
+}) {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      return { error: "No autorizado. Inicie sesión." };
+    }
+
+    const {
+      description,
+      totalAmount,
+      currency,
+      categoryId,
+      startDate,
+      installmentFrequency,
+      totalInstallments,
+    } = data;
+
+    if (!description || !totalAmount || totalAmount <= 0 || !totalInstallments || totalInstallments <= 0) {
+      return { error: "Datos de cuotas inválidos" };
+    }
+
+    const installmentAmount = totalAmount / totalInstallments;
+    const baseDate = new Date(startDate);
+
+    const createdRecords = [];
+    for (let i = 1; i <= totalInstallments; i++) {
+      const dueDate = new Date(baseDate);
+      if (installmentFrequency === "BIWEEKLY") {
+        dueDate.setDate(dueDate.getDate() + (i - 1) * 14);
+      } else {
+        dueDate.setMonth(dueDate.getMonth() + (i - 1));
+      }
+
+      const installmentDescription = `${description} (Cuota ${i}/${totalInstallments})`;
+
+      const record = await prisma.fixedExpense.create({
+        data: {
+          description: installmentDescription,
+          amount: installmentAmount,
+          currency,
+          frequency: "WEEKLY",
+          type: "ONE_TIME",
+          categoryId,
+          userId,
+          isPaid: false,
+          dueDate,
+        },
+        include: { category: true },
+      });
+      createdRecords.push(record);
+    }
+
+    revalidatePath("/budgets");
+    return { success: true, count: createdRecords.length, records: createdRecords };
+  } catch (error: any) {
+    console.error("Error creating installment expense:", error);
+    return { error: "Error al generar las cuotas." };
   }
 }
 

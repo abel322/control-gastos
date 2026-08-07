@@ -16,6 +16,10 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  TrendingUp,
+  Wallet,
+  AlertCircle,
+  CreditCard,
 } from "lucide-react";
 import clsx from "clsx";
 import {
@@ -30,10 +34,12 @@ import { es } from "date-fns/locale";
 import FixedExpenseModal, { InitialFixedData } from "./FixedExpenseModal";
 import {
   createFixedExpense,
+  createInstallmentExpense,
   updateFixedExpense,
   togglePaidStatusForWeek,
   deleteFixedExpense,
   getFixedExpensesForWeek,
+  getWeeklyIncomeUSD,
 } from "@/app/(dashboard)/actions";
 
 interface Category {
@@ -49,7 +55,7 @@ interface FixedExpenseItem {
   amount: number;
   currency: string; // "USD" | "VES"
   frequency: string; // "WEEKLY" | "MONTHLY"
-  type?: string; // "RECURRING" | "ONE_TIME"
+  type?: string; // "RECURRING" | "ONE_TIME" | "INSTALLMENT"
   isPaid: boolean;
   dueDate?: Date | string | null;
   categoryId: string;
@@ -69,7 +75,7 @@ export default function FixedExpensesClient({
   exchangeRate,
 }: FixedExpensesClientProps) {
   const [expenses, setExpenses] = useState<FixedExpenseItem[]>(initialExpenses);
-  const [activeTab, setActiveTab] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
+  const [weeklyIncomeUSD, setWeeklyIncomeUSD] = useState<number>(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FixedExpenseItem | null>(null);
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
@@ -96,11 +102,15 @@ export default function FixedExpensesClient({
     let isMounted = true;
     async function loadWeekData() {
       try {
-        const weekExpenses = await getFixedExpensesForWeek(
-          currentWeekStart.toISOString()
-        );
-        if (isMounted && Array.isArray(weekExpenses)) {
-          setExpenses(weekExpenses as any);
+        const [weekExpenses, incomeUSD] = await Promise.all([
+          getFixedExpensesForWeek(currentWeekStart.toISOString()),
+          getWeeklyIncomeUSD(currentWeekStart.toISOString()),
+        ]);
+        if (isMounted) {
+          if (Array.isArray(weekExpenses)) {
+            setExpenses(weekExpenses as any);
+          }
+          setWeeklyIncomeUSD(incomeUSD);
         }
       } catch (err) {
         console.error("Error loading week data:", err);
@@ -118,21 +128,27 @@ export default function FixedExpensesClient({
   const getItemVES = (item: FixedExpenseItem) =>
     item.currency === "VES" ? item.amount : item.amount * exchangeRate;
 
-  // Compute metrics
-  const weeklyItems = expenses.filter((e) => e.frequency === "WEEKLY");
+  // 1. Tarjeta 1 (Semana Activa): Total de Compromisos de la Semana Activa
+  const activeWeekUSD = expenses.reduce((acc, item) => acc + getItemUSD(item), 0);
+  const activeWeekVES = expenses.reduce((acc, item) => acc + getItemVES(item), 0);
+
+  // 2. Tarjeta 2 (Proyección Mensual): Suma de compromisos mensuales + (semanales x 4)
   const monthlyItems = expenses.filter((e) => e.frequency === "MONTHLY");
-
-  const weeklyUSD = weeklyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
-  const weeklyVES = weeklyItems.reduce((acc, item) => acc + getItemVES(item), 0);
-
+  const weeklyItems = expenses.filter((e) => e.frequency === "WEEKLY");
   const monthlyUSD = monthlyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
   const monthlyVES = monthlyItems.reduce((acc, item) => acc + getItemVES(item), 0);
+  const weeklyUSD = weeklyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
+  const weeklyVES = weeklyItems.reduce((acc, item) => acc + getItemVES(item), 0);
 
   const totalProjectedUSD = monthlyUSD + weeklyUSD * 4;
   const totalProjectedVES = monthlyVES + weeklyVES * 4;
 
-  const activeItems = activeTab === "WEEKLY" ? weeklyItems : monthlyItems;
-  const paidCount = activeItems.filter((i) => i.isPaid).length;
+  // 3. Tarjeta 3 (Disponibilidad Semanal): (Ingresos Semanales - Compromisos Semanales)
+  const weeklyAvailabilityUSD = weeklyIncomeUSD - activeWeekUSD;
+  const weeklyAvailabilityVES = weeklyAvailabilityUSD * exchangeRate;
+  const isPositiveAvailability = weeklyAvailabilityUSD >= 0;
+
+  const paidCount = expenses.filter((i) => i.isPaid).length;
 
   // Rango de la semana activa formateado
   const weekEnd = endOfWeek(currentWeekStart, { weekStartsOn: 1 });
@@ -158,11 +174,34 @@ export default function FixedExpensesClient({
     amount: number;
     currency: "USD" | "VES";
     frequency: "WEEKLY" | "MONTHLY";
-    type: "RECURRING" | "ONE_TIME";
+    type: "RECURRING" | "ONE_TIME" | "INSTALLMENT";
     categoryId: string;
     dueDate?: string;
+    startDate?: string;
+    installmentFrequency?: "BIWEEKLY" | "MONTHLY";
+    totalInstallments?: number;
   }) => {
     const matchedCategory = categories.find((c) => c.id === data.categoryId);
+
+    if (data.type === "INSTALLMENT" && data.startDate && data.totalInstallments) {
+      // Create Cashea installment schedule
+      const res = await createInstallmentExpense({
+        description: data.description,
+        totalAmount: data.amount,
+        currency: data.currency,
+        categoryId: data.categoryId,
+        startDate: data.startDate,
+        installmentFrequency: data.installmentFrequency || "BIWEEKLY",
+        totalInstallments: data.totalInstallments,
+      });
+      if (res.success) {
+        const weekExpenses = await getFixedExpensesForWeek(
+          currentWeekStart.toISOString()
+        );
+        if (Array.isArray(weekExpenses)) setExpenses(weekExpenses as any);
+      }
+      return;
+    }
 
     if (editingItem) {
       // Edit existing fixed expense
@@ -272,13 +311,13 @@ export default function FixedExpensesClient({
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-gray-900">Gastos Fijos y Compromisos</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Gastos Fijos y Flujo de Caja</h1>
             <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
-              Recurrentes
+              Control Semanal
             </span>
           </div>
           <p className="mt-1 text-sm text-gray-500">
-            Administra tus pagos obligatorios semanales y mensuales de forma clara y organízalos por estado.
+            Visualiza y administra tus compromisos semanales, mensuales y cuotas en una vista unificada.
           </p>
         </div>
 
@@ -287,17 +326,17 @@ export default function FixedExpensesClient({
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-all active:scale-95 shrink-0"
         >
           <Plus className="h-4 w-4" />
-          <span>Configurar Gasto Fijo</span>
+          <span>Configurar Compromiso / Deuda</span>
         </button>
       </div>
 
-      {/* Metric Cards */}
+      {/* Metric Cards (Header de Resumen) */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        {/* Weekly commitments */}
+        {/* Card 1: Compromisos de la Semana Activa */}
         <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md transition-all">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-              Compromisos Semanales
+              Compromisos de la Semana
             </span>
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
               <CalendarDays className="h-5 w-5" />
@@ -306,48 +345,23 @@ export default function FixedExpensesClient({
 
           <div className="mt-4">
             <div className="text-2xl font-black text-gray-900">
-              ${formatUSD(weeklyUSD)}
+              ${formatUSD(activeWeekUSD)}
             </div>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ Bs. {formatVES(weeklyVES)} / semana
+              ≈ Bs. {formatVES(activeWeekVES)}
             </p>
           </div>
 
           <div className="mt-4 flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50/80 px-3 py-1.5 rounded-lg w-fit font-medium">
-            <span>{weeklyItems.length} gastos fijos semanales</span>
+            <span>{expenses.length} compromisos en esta semana</span>
           </div>
         </div>
 
-        {/* Monthly commitments */}
-        <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-              Compromisos Mensuales
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
-              <Calendar className="h-5 w-5" />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="text-2xl font-black text-gray-900">
-              ${formatUSD(monthlyUSD)}
-            </div>
-            <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ Bs. {formatVES(monthlyVES)} / mes
-            </p>
-          </div>
-
-          <div className="mt-4 flex items-center gap-1.5 text-xs text-purple-700 bg-purple-50/80 px-3 py-1.5 rounded-lg w-fit font-medium">
-            <span>{monthlyItems.length} servicios y pagos mensuales</span>
-          </div>
-        </div>
-
-        {/* Total Projected Month */}
+        {/* Card 2: Proyección Mensual */}
         <div className="relative overflow-hidden rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/50 via-white to-white p-6 shadow-sm hover:shadow-md transition-all">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-purple-900">
-              Total Obligatorio del Mes
+              Proyección Obligatoria Mensual
             </span>
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
               <Zap className="h-5 w-5" />
@@ -359,24 +373,75 @@ export default function FixedExpensesClient({
               ${formatUSD(totalProjectedUSD)}
             </div>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              Proyectado: Bs. {formatVES(totalProjectedVES)}
+              ≈ Bs. {formatVES(totalProjectedVES)} / mes
             </p>
           </div>
 
           <p className="mt-4 text-xs text-gray-500">
-            Suma de compromisos mensuales + (semanales × 4).
+            Suma de mensuales + (semanales × 4).
+          </p>
+        </div>
+
+        {/* Card 3: Disponibilidad Semanal */}
+        <div
+          className={clsx(
+            "relative overflow-hidden rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all",
+            isPositiveAvailability
+              ? "border-emerald-200 bg-gradient-to-br from-emerald-50/50 via-white to-white"
+              : "border-red-200 bg-gradient-to-br from-red-50/50 via-white to-white"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span
+              className={clsx(
+                "text-xs font-bold uppercase tracking-wider",
+                isPositiveAvailability ? "text-emerald-900" : "text-red-900"
+              )}
+            >
+              Disponibilidad Semanal
+            </span>
+            <div
+              className={clsx(
+                "flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm",
+                isPositiveAvailability ? "bg-emerald-600" : "bg-red-600"
+              )}
+            >
+              {isPositiveAvailability ? (
+                <TrendingUp className="h-5 w-5" />
+              ) : (
+                <AlertCircle className="h-5 w-5" />
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <div
+              className={clsx(
+                "text-2xl font-black",
+                isPositiveAvailability ? "text-emerald-600" : "text-red-600"
+              )}
+            >
+              {isPositiveAvailability ? "+" : "-"}${formatUSD(Math.abs(weeklyAvailabilityUSD))}
+            </div>
+            <p className="text-xs font-medium text-gray-500 mt-0.5">
+              ≈ Bs. {formatVES(Math.abs(weeklyAvailabilityVES))} (Saldo semanal)
+            </p>
+          </div>
+
+          <p className="mt-4 text-xs text-gray-500">
+            Ingresos semanales (${formatUSD(weeklyIncomeUSD)}) − Compromisos.
           </p>
         </div>
       </div>
 
       {/* Main Content Area */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-        {/* 2. Componente Selector de Semana (UI Header de la Tabla) */}
+        {/* Componente Selector de Semana (UI Header de la Tabla) */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-gray-200 px-6 py-4 bg-gradient-to-r from-purple-50/40 via-white to-gray-50/40">
           <div className="flex items-center gap-2">
             <CalendarDays className="h-5 w-5 text-primary" />
             <span className="text-sm font-bold text-gray-900">
-              Control de Gastos por Semana
+              Navegación por Semana
             </span>
           </div>
 
@@ -418,50 +483,27 @@ export default function FixedExpensesClient({
           )}
         </div>
 
-        {/* Tabs & Controls Header */}
+        {/* Tabla Unificada (Sin Pestañas) Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-100 p-4 sm:p-6 bg-gray-50/50">
-          {/* Tabs */}
-          <div className="flex items-center rounded-xl border border-gray-200 bg-white p-1 shadow-xs">
-            <button
-              onClick={() => setActiveTab("WEEKLY")}
-              className={clsx(
-                "flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-all",
-                activeTab === "WEEKLY"
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
-              )}
-            >
-              <CalendarDays className="h-4 w-4" />
-              <span>Semanales ({weeklyItems.length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("MONTHLY")}
-              className={clsx(
-                "flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-all",
-                activeTab === "MONTHLY"
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
-              )}
-            >
-              <Calendar className="h-4 w-4" />
-              <span>Mensuales ({monthlyItems.length})</span>
-            </button>
+          <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+            <Wallet className="h-4 w-4 text-primary" />
+            <span>Compromisos de la Semana ({expenses.length})</span>
           </div>
 
-          {/* Progress Summary for active tab */}
+          {/* Progress Summary for active week */}
           <div className="flex items-center gap-3">
             <div className="text-right">
               <span className="text-xs text-gray-500 font-medium">Cubierto: </span>
               <span className="text-xs font-bold text-gray-900">
-                {paidCount} de {activeItems.length}
+                {paidCount} de {expenses.length}
               </span>
             </div>
-            {activeItems.length > 0 && (
+            {expenses.length > 0 && (
               <div className="h-2 w-24 rounded-full bg-gray-200 overflow-hidden">
                 <div
                   className="h-full bg-emerald-500 transition-all duration-500"
                   style={{
-                    width: `${(paidCount / activeItems.length) * 100}%`,
+                    width: `${(paidCount / expenses.length) * 100}%`,
                   }}
                 />
               </div>
@@ -470,16 +512,16 @@ export default function FixedExpensesClient({
         </div>
 
         {/* List of Commitments */}
-        {activeItems.length === 0 ? (
+        {expenses.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400 mb-4">
               <PiggyBank className="h-7 w-7" />
             </div>
             <h3 className="text-base font-bold text-gray-900">
-              No hay compromisos {activeTab === "WEEKLY" ? "semanales" : "mensuales"}
+              No hay compromisos para esta semana
             </h3>
             <p className="mt-1 text-xs text-gray-500 max-w-sm">
-              Empieza agregando un nuevo gasto fijo como mercado, internet o servicios obligatorios.
+              Agrega tus compromisos fijos o financiamientos por cuotas para controlar tu flujo de caja semanal.
             </p>
             <button
               onClick={handleOpenCreateModal}
@@ -491,10 +533,10 @@ export default function FixedExpensesClient({
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {activeItems.map((item) => {
+            {expenses.map((item) => {
               const isPaid = item.isPaid;
               const isOneTime = item.type === "ONE_TIME";
-              // Resolve matching category details for correct icon and color
+              const isInstallment = item.type === "INSTALLMENT" || item.description.includes("Cuota");
               const cat =
                 categories.find((c) => c.id === item.categoryId) ||
                 item.category;
@@ -551,7 +593,7 @@ export default function FixedExpensesClient({
                         >
                           {item.description}
                         </h4>
-                        
+
                         {/* Status Badge */}
                         <span
                           className={clsx(
@@ -578,17 +620,19 @@ export default function FixedExpensesClient({
                         <span
                           className={clsx(
                             "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border",
-                            isOneTime
+                            isInstallment
+                              ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                              : isOneTime
                               ? "bg-purple-50 border-purple-200 text-purple-700"
                               : "bg-blue-50 border-blue-200 text-blue-700"
                           )}
                         >
-                          {isOneTime ? "📌 Puntual" : "🔄 Recurrente"}
+                          {isInstallment ? "💳 Cuota Cashea" : isOneTime ? "📌 Puntual" : "🔄 Recurrente"}
                         </span>
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         Categoría: <span className="font-medium text-gray-700">{catName}</span>
-                        {isOneTime && item.dueDate && (
+                        {item.dueDate && (
                           <span className="ml-2 text-purple-600 font-medium">
                             • Vence: {new Date(item.dueDate).toLocaleDateString("es-VE")}
                           </span>
@@ -662,7 +706,7 @@ export default function FixedExpensesClient({
                 amount: editingItem.amount,
                 currency: editingItem.currency as "USD" | "VES",
                 frequency: editingItem.frequency as "WEEKLY" | "MONTHLY",
-                type: (editingItem.type as "RECURRING" | "ONE_TIME") || "RECURRING",
+                type: (editingItem.type as "RECURRING" | "ONE_TIME" | "INSTALLMENT") || "RECURRING",
                 categoryId: editingItem.categoryId,
                 dueDate: editingItem.dueDate,
               }
