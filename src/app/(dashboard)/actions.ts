@@ -1044,6 +1044,66 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
 }
 
 /**
+ * Get all fixed expenses for a given month, including payment logs.
+ */
+export async function getFixedExpensesForMonth(monthStartIso?: string) {
+  try {
+    const userId = await getUserId();
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
+    const targetDate = monthStartIso ? new Date(monthStartIso) : new Date();
+    const monthStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0);
+    const monthEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
+
+    const [fixedExpenses, logs] = await Promise.all([
+      prisma.fixedExpense.findMany({
+        where: { userId },
+        include: { category: true },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.fixedExpenseLog.findMany({
+        where: {
+          userId,
+          weekStart: {
+            gte: new Date(monthStart.getTime() - 7 * 24 * 60 * 60 * 1000),
+            lte: new Date(monthEnd.getTime() + 7 * 24 * 60 * 60 * 1000),
+          },
+        },
+      }),
+    ]);
+
+    const logMap = new Map<string, boolean>();
+    logs.forEach((log) => {
+      const key = `${log.fixedExpenseId}_${new Date(log.weekStart).toISOString().split("T")[0]}`;
+      logMap.set(key, log.isPaid);
+      logMap.set(log.fixedExpenseId, log.isPaid);
+    });
+
+    const filteredExpenses = fixedExpenses.filter((expense) => {
+      const itemType = expense.type || "RECURRING";
+      if (itemType === "ONE_TIME" || itemType === "INSTALLMENT") {
+        const dateToCheck = expense.dueDate
+          ? new Date(expense.dueDate)
+          : new Date(expense.createdAt);
+        return dateToCheck >= monthStart && dateToCheck <= monthEnd;
+      }
+      return true;
+    });
+
+    return filteredExpenses.map((expense) => ({
+      ...expense,
+      type: expense.type || "RECURRING",
+      isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
+    }));
+  } catch (error) {
+    console.error("Error fetching fixed expenses for month:", error);
+    return getFixedExpensesForWeek();
+  }
+}
+
+/**
  * Get income sum for a given week range (or weekly estimate).
  */
 export async function getWeeklyIncomeUSD(weekStartIso?: string): Promise<number> {

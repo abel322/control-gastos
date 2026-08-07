@@ -27,11 +27,14 @@ import {
   endOfWeek,
   subWeeks,
   addWeeks,
+  addMonths,
+  subMonths,
   format,
   isSameWeek,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import FixedExpenseModal, { InitialFixedData } from "./FixedExpenseModal";
+import CalendarGrid from "./CalendarGrid";
 import {
   createFixedExpense,
   createInstallmentExpense,
@@ -39,6 +42,7 @@ import {
   togglePaidStatusForWeek,
   deleteFixedExpense,
   getFixedExpensesForWeek,
+  getFixedExpensesForMonth,
   getWeeklyIncomeUSD,
 } from "@/app/(dashboard)/actions";
 
@@ -76,14 +80,18 @@ export default function FixedExpensesClient({
 }: FixedExpensesClientProps) {
   const [expenses, setExpenses] = useState<FixedExpenseItem[]>(initialExpenses);
   const [weeklyIncomeUSD, setWeeklyIncomeUSD] = useState<number>(0);
+  const [viewMode, setViewMode] = useState<"LIST" | "CALENDAR">("LIST");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FixedExpenseItem | null>(null);
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
 
-  // 1. Estado de Navegación de Fecha (React State)
+  // 1. Estado de Navegación de Fecha para Semana
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
     startOfWeek(new Date(), { weekStartsOn: 1 })
   );
+
+  // 2. Estado de Navegación de Fecha para Mes (Calendario)
+  const [currentMonth, setCurrentMonth] = useState<Date>(() => new Date());
 
   const handlePrevWeek = () => {
     setCurrentWeekStart((prev) => subWeeks(prev, 1));
@@ -97,30 +105,55 @@ export default function FixedExpensesClient({
     setCurrentWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }));
   };
 
-  // Cargar datos al cambiar de semana
+  const handlePrevMonth = () => {
+    setCurrentMonth((prev) => subMonths(prev, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentMonth((prev) => addMonths(prev, 1));
+  };
+
+  const handleResetMonth = () => {
+    setCurrentMonth(new Date());
+  };
+
+  // Cargar datos al cambiar de semana, mes o modo de vista
   useEffect(() => {
     let isMounted = true;
-    async function loadWeekData() {
+    async function loadData() {
       try {
-        const [weekExpenses, incomeUSD] = await Promise.all([
-          getFixedExpensesForWeek(currentWeekStart.toISOString()),
-          getWeeklyIncomeUSD(currentWeekStart.toISOString()),
-        ]);
-        if (isMounted) {
-          if (Array.isArray(weekExpenses)) {
-            setExpenses(weekExpenses as any);
+        if (viewMode === "CALENDAR") {
+          const [monthExpenses, incomeUSD] = await Promise.all([
+            getFixedExpensesForMonth(currentMonth.toISOString()),
+            getWeeklyIncomeUSD(currentWeekStart.toISOString()),
+          ]);
+          if (isMounted) {
+            if (Array.isArray(monthExpenses)) {
+              setExpenses(monthExpenses as any);
+            }
+            setWeeklyIncomeUSD(incomeUSD);
           }
-          setWeeklyIncomeUSD(incomeUSD);
+        } else {
+          const [weekExpenses, incomeUSD] = await Promise.all([
+            getFixedExpensesForWeek(currentWeekStart.toISOString()),
+            getWeeklyIncomeUSD(currentWeekStart.toISOString()),
+          ]);
+          if (isMounted) {
+            if (Array.isArray(weekExpenses)) {
+              setExpenses(weekExpenses as any);
+            }
+            setWeeklyIncomeUSD(incomeUSD);
+          }
         }
       } catch (err) {
-        console.error("Error loading week data:", err);
+        console.error("Error loading data:", err);
       }
     }
-    loadWeekData();
+    loadData();
     return () => {
       isMounted = false;
     };
-  }, [currentWeekStart]);
+  }, [currentWeekStart, currentMonth, viewMode]);
 
   // Helper to convert item amount to USD and VES
   const getItemUSD = (item: FixedExpenseItem) =>
@@ -434,82 +467,145 @@ export default function FixedExpensesClient({
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-        {/* Componente Selector de Semana (UI Header de la Tabla) */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-gray-200 px-6 py-4 bg-gradient-to-r from-purple-50/40 via-white to-gray-50/40">
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-5 w-5 text-primary" />
-            <span className="text-sm font-bold text-gray-900">
-              Navegación por Semana
-            </span>
-          </div>
+      {/* View Mode Toggle Switch */}
+      <div className="flex items-center justify-between gap-4 bg-gray-50/80 p-2 rounded-2xl border border-gray-200">
+        <div className="flex items-center gap-1.5 p-1 bg-white rounded-xl border border-gray-200 shadow-2xs">
+          <button
+            onClick={() => setViewMode("LIST")}
+            className={clsx(
+              "flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-all",
+              viewMode === "LIST"
+                ? "bg-primary text-white shadow-xs"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            )}
+          >
+            <Wallet className="h-4 w-4" />
+            <span>📋 Lista Semanal</span>
+          </button>
 
-          {/* Centered Navigation Controls */}
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5 shadow-sm">
-            <button
-              onClick={handlePrevWeek}
-              className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95"
-              title="Semana anterior"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-
-            <span className="text-sm font-extrabold text-gray-900 min-w-[130px] text-center capitalize px-2">
-              {weekRangeLabel}
-            </span>
-
-            <button
-              onClick={handleNextWeek}
-              className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95"
-              title="Semana siguiente"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-
-          {!isCurrentWeek ? (
-            <button
-              onClick={handleResetToCurrentWeek}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 bg-primary/10 px-3 py-1.5 rounded-lg transition-all"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>Semana Actual</span>
-            </button>
-          ) : (
-            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1 rounded-full">
-              Semana en curso
-            </span>
-          )}
+          <button
+            onClick={() => setViewMode("CALENDAR")}
+            className={clsx(
+              "flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition-all",
+              viewMode === "CALENDAR"
+                ? "bg-primary text-white shadow-xs"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            )}
+          >
+            <Calendar className="h-4 w-4" />
+            <span>📅 Calendario Mensual</span>
+          </button>
         </div>
 
-        {/* Tabla Unificada (Sin Pestañas) Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-100 p-4 sm:p-6 bg-gray-50/50">
-          <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
-            <Wallet className="h-4 w-4 text-primary" />
-            <span>Compromisos de la Semana ({expenses.length})</span>
-          </div>
+        <span className="text-xs text-gray-500 font-medium hidden sm:inline">
+          {viewMode === "LIST"
+            ? "Mostrando compromisos de la semana seleccionada"
+            : "Mostrando cuadrícula del mes completo"}
+        </span>
+      </div>
 
-          {/* Progress Summary for active week */}
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <span className="text-xs text-gray-500 font-medium">Cubierto: </span>
-              <span className="text-xs font-bold text-gray-900">
-                {paidCount} de {expenses.length}
+      {/* Main Content Area: Calendar or List */}
+      {viewMode === "CALENDAR" ? (
+        <CalendarGrid
+          currentMonth={currentMonth}
+          expenses={expenses}
+          exchangeRate={exchangeRate}
+          categories={categories}
+          onTogglePaid={async (id, currentPaid, dateIso) => {
+            setIsUpdating(id);
+            setExpenses((prev) =>
+              prev.map((e) => (e.id === id ? { ...e, isPaid: !currentPaid } : e))
+            );
+            try {
+              await togglePaidStatusForWeek(id, !currentPaid, dateIso);
+            } catch {
+              setExpenses((prev) =>
+                prev.map((e) => (e.id === id ? { ...e, isPaid: currentPaid } : e))
+              );
+            } finally {
+              setIsUpdating(null);
+            }
+          }}
+          onPrevMonth={handlePrevMonth}
+          onNextMonth={handleNextMonth}
+          onResetMonth={handleResetMonth}
+        />
+      ) : (
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          {/* Componente Selector de Semana (UI Header de la Tabla) */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-gray-200 px-6 py-4 bg-gradient-to-r from-purple-50/40 via-white to-gray-50/40">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-primary" />
+              <span className="text-sm font-bold text-gray-900">
+                Navegación por Semana
               </span>
             </div>
-            {expenses.length > 0 && (
-              <div className="h-2 w-24 rounded-full bg-gray-200 overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-500"
-                  style={{
-                    width: `${(paidCount / expenses.length) * 100}%`,
-                  }}
-                />
-              </div>
+
+            {/* Centered Navigation Controls */}
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5 shadow-sm">
+              <button
+                onClick={handlePrevWeek}
+                className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95"
+                title="Semana anterior"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              <span className="text-sm font-extrabold text-gray-900 min-w-[130px] text-center capitalize px-2">
+                {weekRangeLabel}
+              </span>
+
+              <button
+                onClick={handleNextWeek}
+                className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95"
+                title="Semana siguiente"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+
+            {!isCurrentWeek ? (
+              <button
+                onClick={handleResetToCurrentWeek}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 bg-primary/10 px-3 py-1.5 rounded-lg transition-all"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Semana Actual</span>
+              </button>
+            ) : (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1 rounded-full">
+                Semana en curso
+              </span>
             )}
           </div>
-        </div>
+
+          {/* Tabla Unificada (Sin Pestañas) Header */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-100 p-4 sm:p-6 bg-gray-50/50">
+            <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+              <Wallet className="h-4 w-4 text-primary" />
+              <span>Compromisos de la Semana ({expenses.length})</span>
+            </div>
+
+            {/* Progress Summary for active week */}
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <span className="text-xs text-gray-500 font-medium">Cubierto: </span>
+                <span className="text-xs font-bold text-gray-900">
+                  {paidCount} de {expenses.length}
+                </span>
+              </div>
+              {expenses.length > 0 && (
+                <div className="h-2 w-24 rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-500"
+                    style={{
+                      width: `${(paidCount / expenses.length) * 100}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
 
         {/* List of Commitments */}
         {expenses.length === 0 ? (
@@ -687,6 +783,7 @@ export default function FixedExpensesClient({
           </div>
         )}
       </div>
+      )}
 
       {/* Modal */}
       <FixedExpenseModal
