@@ -979,67 +979,93 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
       logMap.set(log.fixedExpenseId, log.isPaid);
     });
 
-    const filteredExpenses = fixedExpenses.filter((expense) => {
+    const matchingExpenses: Array<any> = [];
+
+    for (const expense of fixedExpenses) {
       const itemType = expense.type || "RECURRING";
+
       if (itemType === "ONE_TIME" || itemType === "INSTALLMENT") {
         // Must have dueDate (or createdAt) inside the selected week range [weekStart, weekEnd]
         const dateToCheck = expense.dueDate
           ? new Date(expense.dueDate)
           : new Date(expense.createdAt);
-        return dateToCheck >= weekStart && dateToCheck <= weekEnd;
-      }
-      // RECURRING items are always included
-      return true;
-    });
+        if (dateToCheck >= weekStart && dateToCheck <= weekEnd) {
+          matchingExpenses.push({
+            ...expense,
+            type: itemType,
+            dueDate: dateToCheck,
+            isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
+          });
+        }
+      } else if (itemType === "RECURRING") {
+        if (expense.frequency === "WEEKLY") {
+          // Weekly recurring commitment: occurs every week on its designated weekday
+          const baseDate = expense.dueDate
+            ? new Date(expense.dueDate)
+            : new Date(expense.createdAt);
+          const targetWeekday = baseDate.getDay(); // 0 is Sunday, 1..6 is Mon..Sat
+          const diffDays = targetWeekday === 0 ? 6 : targetWeekday - 1; // Monday = 0 diff
+          const calculatedDueDate = new Date(weekStart);
+          calculatedDueDate.setDate(weekStart.getDate() + diffDays);
+          calculatedDueDate.setHours(12, 0, 0, 0);
 
-    return filteredExpenses.map((expense) => ({
-      ...expense,
-      type: expense.type || "RECURRING",
-      isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
-    }));
+          matchingExpenses.push({
+            ...expense,
+            type: "RECURRING",
+            dueDate: calculatedDueDate,
+            isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
+          });
+        } else if (expense.frequency === "MONTHLY") {
+          // Monthly recurring commitment: only occurs once a month on its cut-off day
+          const baseDate = expense.dueDate
+            ? new Date(expense.dueDate)
+            : new Date(expense.createdAt);
+          const dayOfMonth = baseDate.getDate();
+
+          // Check if dayOfMonth occurs within [weekStart, weekEnd]
+          const month1 = { year: weekStart.getFullYear(), month: weekStart.getMonth() };
+          const month2 = { year: weekEnd.getFullYear(), month: weekEnd.getMonth() };
+
+          const monthsToCheck = [month1];
+          if (month1.year !== month2.year || month1.month !== month2.month) {
+            monthsToCheck.push(month2);
+          }
+
+          let matchedDate: Date | null = null;
+          for (const m of monthsToCheck) {
+            const maxDays = new Date(m.year, m.month + 1, 0).getDate();
+            const targetDay = Math.min(dayOfMonth, maxDays);
+            const candidateDate = new Date(m.year, m.month, targetDay, 12, 0, 0);
+
+            if (candidateDate >= weekStart && candidateDate <= weekEnd) {
+              matchedDate = candidateDate;
+              break;
+            }
+          }
+
+          if (matchedDate) {
+            matchingExpenses.push({
+              ...expense,
+              type: "RECURRING",
+              dueDate: matchedDate,
+              isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
+            });
+          }
+        } else {
+          // Default recurring fallback
+          matchingExpenses.push({
+            ...expense,
+            type: "RECURRING",
+            isPaid: logMap.has(expense.id) ? logMap.get(expense.id)! : expense.isPaid,
+          });
+        }
+      }
+    }
+
+    return matchingExpenses;
   } catch (error) {
     console.error("Error fetching fixed expenses for week:", error);
-    return [
-      {
-        id: "fe1",
-        description: "Mercado Semanal",
-        amount: 60.0,
-        currency: "USD",
-        frequency: "WEEKLY",
-        type: "RECURRING",
-        isPaid: true,
-        categoryId: "1",
-        category: { name: "Alimentación", icon: "🍔", color: "#f59e0b" },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      {
-        id: "fe2",
-        description: "Internet Inter",
-        amount: 35.0,
-        currency: "USD",
-        frequency: "MONTHLY",
-        type: "RECURRING",
-        isPaid: false,
-        categoryId: "7",
-        category: { name: "Servicios", icon: "💡", color: "#f97316" },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      {
-        id: "fe3",
-        description: "Condominio",
-        amount: 45.0,
-        currency: "USD",
-        frequency: "MONTHLY",
-        type: "RECURRING",
-        isPaid: false,
-        categoryId: "3",
-        category: { name: "Vivienda", icon: "🏠", color: "#8b5cf6" },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ];
+    return [];
   }
 }
 

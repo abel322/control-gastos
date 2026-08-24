@@ -80,6 +80,7 @@ export default function FixedExpensesClient({
   exchangeRate,
 }: FixedExpensesClientProps) {
   const [expenses, setExpenses] = useState<FixedExpenseItem[]>(initialExpenses);
+  const [monthExpenses, setMonthExpenses] = useState<FixedExpenseItem[]>([]);
   const [incomeData, setIncomeData] = useState<WeeklyIncomeSummary>({
     totalIncomeUSD: 0,
     actualIncomeUSD: 0,
@@ -130,26 +131,31 @@ export default function FixedExpensesClient({
     async function loadData() {
       try {
         if (viewMode === "CALENDAR") {
-          const [monthExpenses, incData] = await Promise.all([
+          const [mExpenses, incData] = await Promise.all([
             getFixedExpensesForMonth(currentMonth.toISOString()),
             getWeeklyIncomeData(currentWeekStart.toISOString()),
           ]);
           if (isMounted) {
-            if (Array.isArray(monthExpenses)) {
-              setExpenses(monthExpenses as any);
+            if (Array.isArray(mExpenses)) {
+              setExpenses(mExpenses as any);
+              setMonthExpenses(mExpenses as any);
             }
             if (incData) {
               setIncomeData(incData);
             }
           }
         } else {
-          const [weekExpenses, incData] = await Promise.all([
+          const [weekExpenses, incData, mExpenses] = await Promise.all([
             getFixedExpensesForWeek(currentWeekStart.toISOString()),
             getWeeklyIncomeData(currentWeekStart.toISOString()),
+            getFixedExpensesForMonth(currentWeekStart.toISOString()),
           ]);
           if (isMounted) {
             if (Array.isArray(weekExpenses)) {
               setExpenses(weekExpenses as any);
+            }
+            if (Array.isArray(mExpenses)) {
+              setMonthExpenses(mExpenses as any);
             }
             if (incData) {
               setIncomeData(incData);
@@ -177,8 +183,9 @@ export default function FixedExpensesClient({
   const activeWeekVES = expenses.reduce((acc, item) => acc + getItemVES(item), 0);
 
   // 2. Tarjeta 2 (Proyección Mensual): Suma de compromisos mensuales + (semanales x 4)
-  const monthlyItems = expenses.filter((e) => e.frequency === "MONTHLY");
-  const weeklyItems = expenses.filter((e) => e.frequency === "WEEKLY");
+  const projectionSource = monthExpenses.length > 0 ? monthExpenses : expenses;
+  const monthlyItems = projectionSource.filter((e) => e.frequency === "MONTHLY");
+  const weeklyItems = projectionSource.filter((e) => e.frequency === "WEEKLY");
   const monthlyUSD = monthlyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
   const monthlyVES = monthlyItems.reduce((acc, item) => acc + getItemVES(item), 0);
   const weeklyUSD = weeklyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
