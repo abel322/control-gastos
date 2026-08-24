@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { X, Loader2, Tag, CreditCard, DollarSign, CalendarDays } from "lucide-react";
+import { X, Loader2, Tag, CreditCard, DollarSign, CalendarDays, Calendar } from "lucide-react";
 
 interface Category {
   id: string;
@@ -19,6 +19,8 @@ export interface InitialFixedData {
   type?: "RECURRING" | "ONE_TIME" | "INSTALLMENT";
   categoryId: string;
   dueDate?: string | Date | null;
+  recurringDayOfWeek?: string | null;
+  recurringDayOfMonth?: number | null;
 }
 
 interface FixedExpenseModalProps {
@@ -36,6 +38,8 @@ interface FixedExpenseModalProps {
     startDate?: string;
     installmentFrequency?: "BIWEEKLY" | "MONTHLY";
     totalInstallments?: number;
+    recurringDayOfWeek?: string;
+    recurringDayOfMonth?: number;
   }) => Promise<void>;
   initialData?: InitialFixedData | null;
   defaultDueDate?: Date;
@@ -57,6 +61,10 @@ export default function FixedExpenseModal({
   const [categoryId, setCategoryId] = useState(categories[0]?.id || "");
   const [dueDate, setDueDate] = useState<string>("");
 
+  // Recurring specific state
+  const [recurringDayOfWeek, setRecurringDayOfWeek] = useState<string>("1"); // 1 (Lunes) to 7 (Domingo)
+  const [recurringDayOfMonth, setRecurringDayOfMonth] = useState<string>("1"); // 1 to 31
+
   // Installment specific state
   const [startDate, setStartDate] = useState<string>("");
   const [installmentFrequency, setInstallmentFrequency] = useState<"BIWEEKLY" | "MONTHLY">("BIWEEKLY");
@@ -69,7 +77,11 @@ export default function FixedExpenseModal({
 
   useEffect(() => {
     if (isOpen) {
-      const todayIso = (defaultDueDate || new Date()).toISOString().split("T")[0];
+      const today = defaultDueDate || new Date();
+      const todayIso = today.toISOString().split("T")[0];
+      const jsDay = today.getDay();
+      const isoDay = jsDay === 0 ? "7" : jsDay.toString();
+
       if (initialData) {
         setDescription(initialData.description);
         setAmount(initialData.amount.toString());
@@ -83,6 +95,16 @@ export default function FixedExpenseModal({
             : todayIso
         );
         setStartDate(todayIso);
+
+        if (initialData.dueDate) {
+          const d = new Date(initialData.dueDate);
+          const dDay = d.getDay();
+          setRecurringDayOfWeek(dDay === 0 ? "7" : dDay.toString());
+          setRecurringDayOfMonth(d.getDate().toString());
+        } else {
+          setRecurringDayOfWeek(isoDay);
+          setRecurringDayOfMonth(today.getDate().toString());
+        }
       } else {
         setDescription("");
         setAmount("");
@@ -92,6 +114,8 @@ export default function FixedExpenseModal({
         setCategoryId(categories[0]?.id || "");
         setDueDate(todayIso);
         setStartDate(todayIso);
+        setRecurringDayOfWeek(isoDay);
+        setRecurringDayOfMonth(today.getDate().toString());
         setInstallmentFrequency("BIWEEKLY");
         setTotalInstallments("3");
       }
@@ -143,14 +167,54 @@ export default function FixedExpenseModal({
       return;
     }
 
-    if (type === "ONE_TIME" && !dueDate) {
-      setError("Por favor, selecciona una fecha o semana de vencimiento para el pago puntual.");
-      return;
-    }
+    let calculatedDueDate: string | undefined = undefined;
+    let submitRecurringDayOfWeek: string | undefined = undefined;
+    let submitRecurringDayOfMonth: number | undefined = undefined;
+    let submitStartDate: string | undefined = undefined;
+    let submitInstallmentFrequency: "BIWEEKLY" | "MONTHLY" | undefined = undefined;
+    let submitTotalInstallments: number | undefined = undefined;
 
-    let parsedInstallments = 1;
-    if (type === "INSTALLMENT") {
-      parsedInstallments = parseInt(totalInstallments, 10);
+    if (type === "RECURRING") {
+      const ref = defaultDueDate ? new Date(defaultDueDate) : new Date();
+
+      if (frequency === "WEEKLY") {
+        const dayOfWeekNum = parseInt(recurringDayOfWeek, 10);
+        if (isNaN(dayOfWeekNum) || dayOfWeekNum < 1 || dayOfWeekNum > 7) {
+          setError("Por favor, selecciona un día de la semana válido.");
+          return;
+        }
+
+        // Calculate date of selected weekday in the reference week (Monday = 1)
+        const refCopy = new Date(ref);
+        const day = refCopy.getDay();
+        const diff = refCopy.getDate() - day + (day === 0 ? -6 : 1);
+        const monday = new Date(refCopy.setDate(diff));
+        monday.setHours(12, 0, 0, 0);
+
+        const targetDate = new Date(monday);
+        targetDate.setDate(monday.getDate() + (dayOfWeekNum - 1));
+        calculatedDueDate = targetDate.toISOString();
+        submitRecurringDayOfWeek = recurringDayOfWeek;
+      } else if (frequency === "MONTHLY") {
+        const dayOfMonthNum = parseInt(recurringDayOfMonth, 10);
+        if (isNaN(dayOfMonthNum) || dayOfMonthNum < 1 || dayOfMonthNum > 31) {
+          setError("Por favor, ingresa un día de corte válido entre 1 y 31.");
+          return;
+        }
+
+        const refCopy = new Date(ref);
+        const targetDate = new Date(refCopy.getFullYear(), refCopy.getMonth(), dayOfMonthNum, 12, 0, 0);
+        calculatedDueDate = targetDate.toISOString();
+        submitRecurringDayOfMonth = dayOfMonthNum;
+      }
+    } else if (type === "ONE_TIME") {
+      if (!dueDate) {
+        setError("Por favor, selecciona una fecha o semana de vencimiento para el pago puntual.");
+        return;
+      }
+      calculatedDueDate = dueDate;
+    } else if (type === "INSTALLMENT") {
+      const parsedInstallments = parseInt(totalInstallments, 10);
       if (isNaN(parsedInstallments) || parsedInstallments <= 0) {
         setError("Ingresa un número válido de cuotas (ej. 3, 6, 12).");
         return;
@@ -159,6 +223,9 @@ export default function FixedExpenseModal({
         setError("Por favor, selecciona la fecha de inicio de la primera cuota.");
         return;
       }
+      submitStartDate = startDate;
+      submitInstallmentFrequency = installmentFrequency;
+      submitTotalInstallments = parsedInstallments;
     }
 
     setIsSubmitting(true);
@@ -170,10 +237,12 @@ export default function FixedExpenseModal({
         frequency,
         type,
         categoryId,
-        dueDate: dueDate || undefined,
-        startDate: startDate || undefined,
-        installmentFrequency,
-        totalInstallments: parsedInstallments,
+        dueDate: calculatedDueDate,
+        startDate: submitStartDate,
+        installmentFrequency: submitInstallmentFrequency,
+        totalInstallments: submitTotalInstallments,
+        recurringDayOfWeek: submitRecurringDayOfWeek,
+        recurringDayOfMonth: submitRecurringDayOfMonth,
       });
       onClose();
     } catch (err: any) {
@@ -394,38 +463,40 @@ export default function FixedExpenseModal({
           )}
 
           {/* Frequency & Category Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Frequency Toggle */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1">
-                <CalendarDays className="h-3.5 w-3.5 text-gray-400" />
-                <span>Frecuencia de Pago</span>
-              </label>
-              <div className="flex h-11 items-center rounded-xl border border-gray-200 bg-gray-50 p-1">
-                <button
-                  type="button"
-                  onClick={() => setFrequency("WEEKLY")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-all ${
-                    frequency === "WEEKLY"
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100/50"
-                  }`}
-                >
-                  Semanal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFrequency("MONTHLY")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-all ${
-                    frequency === "MONTHLY"
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-700 hover:bg-gray-100/50"
-                  }`}
-                >
-                  Mensual
-                </button>
+          <div className={type === "INSTALLMENT" ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 sm:grid-cols-2 gap-4"}>
+            {/* Frequency Toggle - only for RECURRING and ONE_TIME */}
+            {type !== "INSTALLMENT" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                  <CalendarDays className="h-3.5 w-3.5 text-gray-400" />
+                  <span>Frecuencia de Pago</span>
+                </label>
+                <div className="flex h-11 items-center rounded-xl border border-gray-200 bg-gray-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setFrequency("WEEKLY")}
+                    className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-all ${
+                      frequency === "WEEKLY"
+                        ? "bg-primary text-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100/50"
+                    }`}
+                  >
+                    Semanal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFrequency("MONTHLY")}
+                    className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-all ${
+                      frequency === "MONTHLY"
+                        ? "bg-primary text-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100/50"
+                    }`}
+                  >
+                    Mensual
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Category */}
             <div className="space-y-1.5">
@@ -456,6 +527,74 @@ export default function FixedExpenseModal({
               </div>
             </div>
           </div>
+
+          {/* Conditional Day / Date Selection for RECURRING */}
+          {type === "RECURRING" && (
+            <div className="space-y-1.5 bg-purple-50/60 border border-purple-100 rounded-xl p-3.5 transition-all">
+              {frequency === "WEEKLY" ? (
+                <>
+                  <label
+                    htmlFor="recurringDayOfWeek"
+                    className="text-xs font-semibold uppercase tracking-wider text-purple-900 flex items-center gap-1.5"
+                  >
+                    <Calendar className="h-3.5 w-3.5 text-purple-600" />
+                    <span>Día de Pago de la Semana</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="recurringDayOfWeek"
+                      value={recurringDayOfWeek}
+                      onChange={(e) => setRecurringDayOfWeek(e.target.value)}
+                      className="w-full appearance-none rounded-lg border border-purple-200 bg-white pl-4 pr-10 py-2.5 text-sm font-semibold text-gray-900 focus:border-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-600/20 transition-all"
+                      required
+                    >
+                      <option value="1">Lunes</option>
+                      <option value="2">Martes</option>
+                      <option value="3">Miércoles</option>
+                      <option value="4">Jueves</option>
+                      <option value="5">Viernes</option>
+                      <option value="6">Sábado</option>
+                      <option value="7">Domingo</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
+                      <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                      </svg>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-purple-700">
+                    Selecciona el día de la semana (Lunes a Domingo) en que se realizará este compromiso recurrente.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label
+                    htmlFor="recurringDayOfMonth"
+                    className="text-xs font-semibold uppercase tracking-wider text-purple-900 flex items-center gap-1.5"
+                  >
+                    <CalendarDays className="h-3.5 w-3.5 text-purple-600" />
+                    <span>Día de Corte / Pago del Mes (1 - 31)</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="recurringDayOfMonth"
+                      type="number"
+                      min="1"
+                      max="31"
+                      placeholder="Ej. 15"
+                      value={recurringDayOfMonth}
+                      onChange={(e) => setRecurringDayOfMonth(e.target.value)}
+                      className="w-full rounded-lg border border-purple-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-900 focus:border-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-600/20 transition-all placeholder-gray-400"
+                      required
+                    />
+                  </div>
+                  <p className="text-[11px] text-purple-700">
+                    Día del mes (1 al 31) en el que vence o se debita este compromiso cada mes.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Amount and Currency Selector */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
