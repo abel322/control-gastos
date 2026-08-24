@@ -195,11 +195,18 @@ export default function FixedExpensesClient({
   const totalProjectedVES = monthlyVES + weeklyVES * 4;
 
   // 3. Tarjeta 3 (Disponibilidad Semanal): (Ingresos Semanales - Compromisos Semanales)
-  const weeklyIncomeUSD = incomeData.totalIncomeUSD;
+  const weeklyIncomeUSD = incomeData.weeklyIncomeUSD;
   const weeklyIncomeVES = weeklyIncomeUSD * exchangeRate;
   const weeklyAvailabilityUSD = weeklyIncomeUSD - activeWeekUSD;
   const weeklyAvailabilityVES = weeklyAvailabilityUSD * exchangeRate;
-  const isPositiveAvailability = weeklyAvailabilityUSD >= 0;
+  const isPositiveWeekly = weeklyAvailabilityUSD >= 0;
+
+  // 4. Tarjeta 4 (Disponibilidad Mensual): (Ingresos Proyectados Mensuales - Proyección Obligatoria Mensual)
+  const monthlyProjectedIncomeUSD = incomeData.monthlyProjectedIncomeUSD;
+  const monthlyProjectedIncomeVES = monthlyProjectedIncomeUSD * exchangeRate;
+  const monthlyAvailabilityUSD = monthlyProjectedIncomeUSD - totalProjectedUSD;
+  const monthlyAvailabilityVES = monthlyAvailabilityUSD * exchangeRate;
+  const isPositiveMonthly = monthlyAvailabilityUSD >= 0;
 
   const paidCount = expenses.filter((i) => i.isPaid).length;
 
@@ -233,6 +240,8 @@ export default function FixedExpensesClient({
     startDate?: string;
     installmentFrequency?: "BIWEEKLY" | "MONTHLY";
     totalInstallments?: number;
+    recurringDayOfWeek?: string;
+    recurringDayOfMonth?: number;
   }) => {
     const matchedCategory = categories.find((c) => c.id === data.categoryId);
 
@@ -248,10 +257,12 @@ export default function FixedExpensesClient({
         totalInstallments: data.totalInstallments,
       });
       if (res.success) {
-        const weekExpenses = await getFixedExpensesForWeek(
-          currentWeekStart.toISOString()
-        );
+        const [weekExpenses, mExpenses] = await Promise.all([
+          getFixedExpensesForWeek(currentWeekStart.toISOString()),
+          getFixedExpensesForMonth(currentWeekStart.toISOString()),
+        ]);
         if (Array.isArray(weekExpenses)) setExpenses(weekExpenses as any);
+        if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
       }
       return;
     }
@@ -260,31 +271,12 @@ export default function FixedExpensesClient({
       // Edit existing fixed expense
       const res = await updateFixedExpense(editingItem.id, data);
       if (res.success) {
-        setExpenses((prev) =>
-          prev.map((e) => {
-            if (e.id === editingItem.id) {
-              return {
-                ...e,
-                description: data.description,
-                amount: data.amount,
-                currency: data.currency,
-                frequency: data.frequency,
-                type: data.type,
-                categoryId: data.categoryId,
-                dueDate: data.dueDate ? new Date(data.dueDate) : e.dueDate,
-                category:
-                  matchedCategory ||
-                  e.category || {
-                    id: data.categoryId,
-                    name: "General",
-                    color: "#8b5cf6",
-                    icon: "📦",
-                  },
-              };
-            }
-            return e;
-          })
-        );
+        const [wExpenses, mExpenses] = await Promise.all([
+          getFixedExpensesForWeek(currentWeekStart.toISOString()),
+          getFixedExpensesForMonth(currentWeekStart.toISOString()),
+        ]);
+        if (Array.isArray(wExpenses)) setExpenses(wExpenses as any);
+        if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
       }
     } else {
       // Create new fixed expense
@@ -292,29 +284,13 @@ export default function FixedExpensesClient({
         ...data,
         dueDate: data.dueDate || currentWeekStart.toISOString(),
       });
-      if (res.success && res.fixedExpense) {
-        const newItem: FixedExpenseItem = {
-          id: res.fixedExpense.id,
-          description: res.fixedExpense.description,
-          amount: res.fixedExpense.amount,
-          currency: res.fixedExpense.currency,
-          frequency: res.fixedExpense.frequency,
-          type: (res.fixedExpense as any).type || data.type,
-          isPaid: res.fixedExpense.isPaid,
-          dueDate: res.fixedExpense.dueDate,
-          categoryId: res.fixedExpense.categoryId,
-          category:
-            (res.fixedExpense as any).category ||
-            matchedCategory || {
-              id: data.categoryId,
-              name: "General",
-              color: "#8b5cf6",
-              icon: "📦",
-            },
-          createdAt: res.fixedExpense.createdAt || new Date(),
-        };
-
-        setExpenses((prev) => [newItem, ...prev]);
+      if (res.success) {
+        const [wExpenses, mExpenses] = await Promise.all([
+          getFixedExpensesForWeek(currentWeekStart.toISOString()),
+          getFixedExpensesForMonth(currentWeekStart.toISOString()),
+        ]);
+        if (Array.isArray(wExpenses)) setExpenses(wExpenses as any);
+        if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
       }
     }
   };
@@ -366,7 +342,7 @@ export default function FixedExpensesClient({
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-gray-900">Gastos Fijos y Flujo de Caja</h1>
             <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
-              Control Semanal
+              Control Semanal y Mensual
             </span>
           </div>
           <p className="mt-1 text-sm text-gray-500">
@@ -383,63 +359,40 @@ export default function FixedExpensesClient({
         </button>
       </div>
 
-      {/* Metric Cards (Header de Resumen) */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+      {/* Metric Cards (Header de Resumen - 4 Tarjetas) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         {/* Card 1: Compromisos de la Semana Activa */}
-        <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-              Compromisos de la Semana
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-              <CalendarDays className="h-5 w-5" />
+        <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                Compromisos de la Semana
+              </span>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600 shadow-2xs">
+                <CalendarDays className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <div className="text-2xl font-black text-gray-900">
+                ${formatUSD(activeWeekUSD)}
+              </div>
+              <p className="text-xs font-medium text-gray-500 mt-0.5">
+                ≈ Bs. {formatVES(activeWeekVES)}
+              </p>
             </div>
           </div>
 
-          <div className="mt-4">
-            <div className="text-2xl font-black text-gray-900">
-              ${formatUSD(activeWeekUSD)}
-            </div>
-            <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ Bs. {formatVES(activeWeekVES)}
-            </p>
-          </div>
-
-          <div className="mt-4 flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50/80 px-3 py-1.5 rounded-lg w-fit font-medium">
-            <span>{expenses.length} compromisos en esta semana</span>
+          <div className="mt-4 flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50/80 px-3 py-1.5 rounded-lg w-fit font-semibold">
+            <span>{expenses.length} compromiso(s) esta semana</span>
           </div>
         </div>
 
-        {/* Card 2: Proyección Mensual */}
-        <div className="relative overflow-hidden rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/50 via-white to-white p-6 shadow-sm hover:shadow-md transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-purple-900">
-              Proyección Obligatoria Mensual
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
-              <Zap className="h-5 w-5" />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="text-2xl font-black text-primary">
-              ${formatUSD(totalProjectedUSD)}
-            </div>
-            <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ Bs. {formatVES(totalProjectedVES)} / mes
-            </p>
-          </div>
-
-          <p className="mt-4 text-xs text-gray-500">
-            Suma de mensuales + (semanales × 4).
-          </p>
-        </div>
-
-        {/* Card 3: Disponibilidad Semanal */}
+        {/* Card 2: Disponibilidad Semanal (Semana Activa) */}
         <div
           className={clsx(
-            "relative overflow-hidden rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between",
-            isPositiveAvailability
+            "relative overflow-hidden rounded-2xl border p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between",
+            isPositiveWeekly
               ? "border-emerald-200 bg-gradient-to-br from-emerald-50/50 via-white to-white"
               : "border-red-200 bg-gradient-to-br from-red-50/50 via-white to-white"
           )}
@@ -449,7 +402,7 @@ export default function FixedExpensesClient({
               <span
                 className={clsx(
                   "text-xs font-bold uppercase tracking-wider",
-                  isPositiveAvailability ? "text-emerald-900" : "text-red-900"
+                  isPositiveWeekly ? "text-emerald-900" : "text-red-900"
                 )}
               >
                 Disponibilidad Semanal
@@ -457,10 +410,10 @@ export default function FixedExpensesClient({
               <div
                 className={clsx(
                   "flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm",
-                  isPositiveAvailability ? "bg-emerald-600" : "bg-red-600"
+                  isPositiveWeekly ? "bg-emerald-600" : "bg-red-600"
                 )}
               >
-                {isPositiveAvailability ? (
+                {isPositiveWeekly ? (
                   <TrendingUp className="h-5 w-5" />
                 ) : (
                   <AlertCircle className="h-5 w-5" />
@@ -468,47 +421,37 @@ export default function FixedExpensesClient({
               </div>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-3">
               <div className="flex items-baseline gap-2">
                 <div
                   className={clsx(
                     "text-2xl font-black",
-                    isPositiveAvailability ? "text-emerald-600" : "text-red-600"
+                    isPositiveWeekly ? "text-emerald-600" : "text-red-600"
                   )}
                 >
                   {weeklyAvailabilityUSD >= 0 ? "+" : "-"}${formatUSD(Math.abs(weeklyAvailabilityUSD))}
                 </div>
                 <span
                   className={clsx(
-                    "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md",
-                    isPositiveAvailability
-                      ? "bg-emerald-100/80 text-emerald-800"
-                      : "bg-red-100/80 text-red-800"
+                    "text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md",
+                    isPositiveWeekly
+                      ? "bg-emerald-100/90 text-emerald-800"
+                      : "bg-red-100/90 text-red-800"
                   )}
                 >
-                  {isPositiveAvailability ? "Superávit" : "Déficit"}
+                  {isPositiveWeekly ? "Superávit" : "Déficit"}
                 </span>
               </div>
               <p className="text-xs font-medium text-gray-500 mt-0.5">
-                ≈ Bs. {formatVES(Math.abs(weeklyAvailabilityVES))} (Saldo restante)
+                ≈ Bs. {formatVES(Math.abs(weeklyAvailabilityVES))} (Saldo semanal)
               </p>
             </div>
           </div>
 
-          {/* Desglose claro de Ingresos, Compromisos y Saldo */}
-          <div className="mt-5 pt-3.5 border-t border-gray-100 space-y-1.5 text-xs">
+          {/* Desglose claro de Ingresos, Compromisos y Saldo Semanal */}
+          <div className="mt-4 pt-3 border-t border-gray-100 space-y-1 text-xs">
             <div className="flex items-center justify-between text-gray-600">
-              <span className="flex items-center gap-1 text-gray-500">
-                <span>Ingresos de la semana:</span>
-                {incomeData.isEstimated && (
-                  <span
-                    className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-semibold"
-                    title="Promedio semanal calculado a partir de ingresos mensuales registrados"
-                  >
-                    (Promedio base)
-                  </span>
-                )}
-              </span>
+              <span className="text-gray-500">Ingresos semana:</span>
               <span className="font-bold text-gray-900">
                 ${formatUSD(weeklyIncomeUSD)}
               </span>
@@ -521,15 +464,132 @@ export default function FixedExpensesClient({
               </span>
             </div>
 
-            <div className="flex items-center justify-between pt-1.5 border-t border-dashed border-gray-200">
-              <span className="font-semibold text-gray-700">Saldo restante:</span>
+            <div className="flex items-center justify-between pt-1 border-t border-dashed border-gray-200">
+              <span className="font-bold text-gray-700">Saldo restante:</span>
               <span
                 className={clsx(
                   "font-black text-xs",
-                  isPositiveAvailability ? "text-emerald-600" : "text-red-600"
+                  isPositiveWeekly ? "text-emerald-600" : "text-red-600"
                 )}
               >
                 {weeklyAvailabilityUSD >= 0 ? "+" : "-"}${formatUSD(Math.abs(weeklyAvailabilityUSD))}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Proyección Obligatoria Mensual */}
+        <div className="relative overflow-hidden rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/50 via-white to-white p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-900">
+                Proyección Obligatoria Mensual
+              </span>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
+                <Zap className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <div className="text-2xl font-black text-primary">
+                ${formatUSD(totalProjectedUSD)}
+              </div>
+              <p className="text-xs font-medium text-gray-500 mt-0.5">
+                ≈ Bs. {formatVES(totalProjectedVES)} / mes
+              </p>
+            </div>
+          </div>
+
+          <p className="mt-4 text-xs text-gray-500 font-medium">
+            Suma de mensuales + (semanales × 4).
+          </p>
+        </div>
+
+        {/* Card 4: Disponibilidad Mensual (Mes Completo) */}
+        <div
+          className={clsx(
+            "relative overflow-hidden rounded-2xl border p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between",
+            isPositiveMonthly
+              ? "border-emerald-200 bg-gradient-to-br from-emerald-50/50 via-white to-white"
+              : "border-red-200 bg-gradient-to-br from-red-50/50 via-white to-white"
+          )}
+        >
+          <div>
+            <div className="flex items-center justify-between">
+              <span
+                className={clsx(
+                  "text-xs font-bold uppercase tracking-wider",
+                  isPositiveMonthly ? "text-emerald-900" : "text-red-900"
+                )}
+              >
+                Disponibilidad Mensual
+              </span>
+              <div
+                className={clsx(
+                  "flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm",
+                  isPositiveMonthly ? "bg-emerald-600" : "bg-red-600"
+                )}
+              >
+                {isPositiveMonthly ? (
+                  <PiggyBank className="h-5 w-5" />
+                ) : (
+                  <AlertCircle className="h-5 w-5" />
+                )}
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <div className="flex items-baseline gap-2">
+                <div
+                  className={clsx(
+                    "text-2xl font-black",
+                    isPositiveMonthly ? "text-emerald-600" : "text-red-600"
+                  )}
+                >
+                  {monthlyAvailabilityUSD >= 0 ? "+" : "-"}${formatUSD(Math.abs(monthlyAvailabilityUSD))}
+                </div>
+                <span
+                  className={clsx(
+                    "text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md",
+                    isPositiveMonthly
+                      ? "bg-emerald-100/90 text-emerald-800"
+                      : "bg-red-100/90 text-red-800"
+                  )}
+                >
+                  {isPositiveMonthly ? "Superávit" : "Déficit"}
+                </span>
+              </div>
+              <p className="text-xs font-medium text-gray-500 mt-0.5">
+                ≈ Bs. {formatVES(Math.abs(monthlyAvailabilityVES))} (Saldo mensual)
+              </p>
+            </div>
+          </div>
+
+          {/* Desglose claro de Ingresos Proyectados, Compromisos y Saldo Mensual */}
+          <div className="mt-4 pt-3 border-t border-gray-100 space-y-1 text-xs">
+            <div className="flex items-center justify-between text-gray-600">
+              <span className="text-gray-500">Ingresos proyectados:</span>
+              <span className="font-bold text-gray-900">
+                ${formatUSD(monthlyProjectedIncomeUSD)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between text-gray-600">
+              <span className="text-gray-500">Compromisos mes:</span>
+              <span className="font-bold text-gray-900">
+                -${formatUSD(totalProjectedUSD)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-1 border-t border-dashed border-gray-200">
+              <span className="font-bold text-gray-700">Saldo neto mensual:</span>
+              <span
+                className={clsx(
+                  "font-black text-xs",
+                  isPositiveMonthly ? "text-emerald-600" : "text-red-600"
+                )}
+              >
+                {monthlyAvailabilityUSD >= 0 ? "+" : "-"}${formatUSD(Math.abs(monthlyAvailabilityUSD))}
               </span>
             </div>
           </div>

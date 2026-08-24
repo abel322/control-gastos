@@ -1130,27 +1130,29 @@ export async function getFixedExpensesForMonth(monthStartIso?: string) {
 }
 
 /**
- * Summary of weekly income data including fallback information.
+ * Summary of weekly income data including projected monthly income.
  */
 export interface WeeklyIncomeSummary {
+  weeklyIncomeUSD: number;
+  monthlyProjectedIncomeUSD: number;
   totalIncomeUSD: number;
   actualIncomeUSD: number;
-  fallbackIncomeUSD: number;
   isEstimated: boolean;
   incomesCount: number;
 }
 
 /**
- * Get comprehensive income sum and breakdown for a given week range (or fallback weekly estimate).
+ * Get comprehensive income sum and breakdown for a given week range (and monthly projection).
  */
 export async function getWeeklyIncomeData(weekStartIso?: string): Promise<WeeklyIncomeSummary> {
   try {
     const userId = await getUserId();
     if (!userId) {
       return {
+        weeklyIncomeUSD: 0,
+        monthlyProjectedIncomeUSD: 0,
         totalIncomeUSD: 0,
         actualIncomeUSD: 0,
-        fallbackIncomeUSD: 0,
         isEstimated: false,
         incomesCount: 0,
       };
@@ -1185,7 +1187,7 @@ export async function getWeeklyIncomeData(weekStartIso?: string): Promise<Weekly
       return sum + (inc.currency === "USD" ? inc.amount : inc.amount / currentRate);
     }, 0);
 
-    // 2. Get fallback monthly average income (e.g. Month total / 4 or Overall total / 4)
+    // 2. Incomes in current month [monthStart, monthEnd]
     const monthStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0);
     const monthEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
 
@@ -1199,39 +1201,53 @@ export async function getWeeklyIncomeData(weekStartIso?: string): Promise<Weekly
       },
     });
 
-    let monthlyTotalUSD = monthlyIncomes.reduce((sum, inc) => {
+    const actualMonthUSD = monthlyIncomes.reduce((sum, inc) => {
       return sum + (inc.currency === "USD" ? inc.amount : inc.amount / currentRate);
     }, 0);
 
-    if (monthlyTotalUSD === 0) {
-      monthlyTotalUSD = await getTotalIncomeUSD();
-    }
-
-    const fallbackWeeklyUSD = monthlyTotalUSD > 0 ? monthlyTotalUSD / 4 : 0;
+    // 3. Determine base weekly income
+    let calculatedWeeklyUSD = 0;
+    let isEstimated = false;
 
     if (weeklyIncomes.length > 0) {
-      return {
-        totalIncomeUSD: actualIncomeUSD,
-        actualIncomeUSD,
-        fallbackIncomeUSD: fallbackWeeklyUSD,
-        isEstimated: false,
-        incomesCount: weeklyIncomes.length,
-      };
+      // User has income registered in this active week
+      calculatedWeeklyUSD = actualIncomeUSD;
+      isEstimated = false;
     } else {
-      return {
-        totalIncomeUSD: fallbackWeeklyUSD,
-        actualIncomeUSD: 0,
-        fallbackIncomeUSD: fallbackWeeklyUSD,
-        isEstimated: fallbackWeeklyUSD > 0,
-        incomesCount: 0,
-      };
+      // Fallback: take user's latest recorded weekly salary / income directly without dividing by 4
+      const latestIncomes = await prisma.income.findMany({
+        where: { userId },
+        orderBy: { date: "desc" },
+        take: 5,
+      });
+
+      if (latestIncomes.length > 0) {
+        const latestUSD = latestIncomes[0].currency === "USD"
+          ? latestIncomes[0].amount
+          : latestIncomes[0].amount / currentRate;
+        calculatedWeeklyUSD = latestUSD;
+        isEstimated = true;
+      }
     }
+
+    // 4. Monthly projected income: Weekly salary × 4 (or actual month total if higher)
+    const monthlyProjectedUSD = Math.max(actualMonthUSD, calculatedWeeklyUSD * 4);
+
+    return {
+      weeklyIncomeUSD: calculatedWeeklyUSD,
+      monthlyProjectedIncomeUSD: monthlyProjectedUSD,
+      totalIncomeUSD: calculatedWeeklyUSD,
+      actualIncomeUSD,
+      isEstimated,
+      incomesCount: weeklyIncomes.length,
+    };
   } catch (error) {
     console.error("Error fetching weekly income data:", error);
     return {
+      weeklyIncomeUSD: 0,
+      monthlyProjectedIncomeUSD: 0,
       totalIncomeUSD: 0,
       actualIncomeUSD: 0,
-      fallbackIncomeUSD: 0,
       isEstimated: false,
       incomesCount: 0,
     };
@@ -1243,7 +1259,7 @@ export async function getWeeklyIncomeData(weekStartIso?: string): Promise<Weekly
  */
 export async function getWeeklyIncomeUSD(weekStartIso?: string): Promise<number> {
   const data = await getWeeklyIncomeData(weekStartIso);
-  return data.totalIncomeUSD;
+  return data.weeklyIncomeUSD;
 }
 
 /**
