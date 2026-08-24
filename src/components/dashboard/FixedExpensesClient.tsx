@@ -43,7 +43,8 @@ import {
   deleteFixedExpense,
   getFixedExpensesForWeek,
   getFixedExpensesForMonth,
-  getWeeklyIncomeUSD,
+  getWeeklyIncomeData,
+  WeeklyIncomeSummary,
 } from "@/app/(dashboard)/actions";
 
 interface Category {
@@ -79,7 +80,13 @@ export default function FixedExpensesClient({
   exchangeRate,
 }: FixedExpensesClientProps) {
   const [expenses, setExpenses] = useState<FixedExpenseItem[]>(initialExpenses);
-  const [weeklyIncomeUSD, setWeeklyIncomeUSD] = useState<number>(0);
+  const [incomeData, setIncomeData] = useState<WeeklyIncomeSummary>({
+    totalIncomeUSD: 0,
+    actualIncomeUSD: 0,
+    fallbackIncomeUSD: 0,
+    isEstimated: false,
+    incomesCount: 0,
+  });
   const [viewMode, setViewMode] = useState<"LIST" | "CALENDAR">("LIST");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FixedExpenseItem | null>(null);
@@ -123,26 +130,30 @@ export default function FixedExpensesClient({
     async function loadData() {
       try {
         if (viewMode === "CALENDAR") {
-          const [monthExpenses, incomeUSD] = await Promise.all([
+          const [monthExpenses, incData] = await Promise.all([
             getFixedExpensesForMonth(currentMonth.toISOString()),
-            getWeeklyIncomeUSD(currentWeekStart.toISOString()),
+            getWeeklyIncomeData(currentWeekStart.toISOString()),
           ]);
           if (isMounted) {
             if (Array.isArray(monthExpenses)) {
               setExpenses(monthExpenses as any);
             }
-            setWeeklyIncomeUSD(incomeUSD);
+            if (incData) {
+              setIncomeData(incData);
+            }
           }
         } else {
-          const [weekExpenses, incomeUSD] = await Promise.all([
+          const [weekExpenses, incData] = await Promise.all([
             getFixedExpensesForWeek(currentWeekStart.toISOString()),
-            getWeeklyIncomeUSD(currentWeekStart.toISOString()),
+            getWeeklyIncomeData(currentWeekStart.toISOString()),
           ]);
           if (isMounted) {
             if (Array.isArray(weekExpenses)) {
               setExpenses(weekExpenses as any);
             }
-            setWeeklyIncomeUSD(incomeUSD);
+            if (incData) {
+              setIncomeData(incData);
+            }
           }
         }
       } catch (err) {
@@ -177,6 +188,8 @@ export default function FixedExpensesClient({
   const totalProjectedVES = monthlyVES + weeklyVES * 4;
 
   // 3. Tarjeta 3 (Disponibilidad Semanal): (Ingresos Semanales - Compromisos Semanales)
+  const weeklyIncomeUSD = incomeData.totalIncomeUSD;
+  const weeklyIncomeVES = weeklyIncomeUSD * exchangeRate;
   const weeklyAvailabilityUSD = weeklyIncomeUSD - activeWeekUSD;
   const weeklyAvailabilityVES = weeklyAvailabilityUSD * exchangeRate;
   const isPositiveAvailability = weeklyAvailabilityUSD >= 0;
@@ -418,52 +431,101 @@ export default function FixedExpensesClient({
         {/* Card 3: Disponibilidad Semanal */}
         <div
           className={clsx(
-            "relative overflow-hidden rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all",
+            "relative overflow-hidden rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between",
             isPositiveAvailability
               ? "border-emerald-200 bg-gradient-to-br from-emerald-50/50 via-white to-white"
               : "border-red-200 bg-gradient-to-br from-red-50/50 via-white to-white"
           )}
         >
-          <div className="flex items-center justify-between">
-            <span
-              className={clsx(
-                "text-xs font-bold uppercase tracking-wider",
-                isPositiveAvailability ? "text-emerald-900" : "text-red-900"
-              )}
-            >
-              Disponibilidad Semanal
-            </span>
-            <div
-              className={clsx(
-                "flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm",
-                isPositiveAvailability ? "bg-emerald-600" : "bg-red-600"
-              )}
-            >
-              {isPositiveAvailability ? (
-                <TrendingUp className="h-5 w-5" />
-              ) : (
-                <AlertCircle className="h-5 w-5" />
-              )}
+          <div>
+            <div className="flex items-center justify-between">
+              <span
+                className={clsx(
+                  "text-xs font-bold uppercase tracking-wider",
+                  isPositiveAvailability ? "text-emerald-900" : "text-red-900"
+                )}
+              >
+                Disponibilidad Semanal
+              </span>
+              <div
+                className={clsx(
+                  "flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm",
+                  isPositiveAvailability ? "bg-emerald-600" : "bg-red-600"
+                )}
+              >
+                {isPositiveAvailability ? (
+                  <TrendingUp className="h-5 w-5" />
+                ) : (
+                  <AlertCircle className="h-5 w-5" />
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="flex items-baseline gap-2">
+                <div
+                  className={clsx(
+                    "text-2xl font-black",
+                    isPositiveAvailability ? "text-emerald-600" : "text-red-600"
+                  )}
+                >
+                  {weeklyAvailabilityUSD >= 0 ? "+" : "-"}${formatUSD(Math.abs(weeklyAvailabilityUSD))}
+                </div>
+                <span
+                  className={clsx(
+                    "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md",
+                    isPositiveAvailability
+                      ? "bg-emerald-100/80 text-emerald-800"
+                      : "bg-red-100/80 text-red-800"
+                  )}
+                >
+                  {isPositiveAvailability ? "Superávit" : "Déficit"}
+                </span>
+              </div>
+              <p className="text-xs font-medium text-gray-500 mt-0.5">
+                ≈ Bs. {formatVES(Math.abs(weeklyAvailabilityVES))} (Saldo restante)
+              </p>
             </div>
           </div>
 
-          <div className="mt-4">
-            <div
-              className={clsx(
-                "text-2xl font-black",
-                isPositiveAvailability ? "text-emerald-600" : "text-red-600"
-              )}
-            >
-              {isPositiveAvailability ? "+" : "-"}${formatUSD(Math.abs(weeklyAvailabilityUSD))}
+          {/* Desglose claro de Ingresos, Compromisos y Saldo */}
+          <div className="mt-5 pt-3.5 border-t border-gray-100 space-y-1.5 text-xs">
+            <div className="flex items-center justify-between text-gray-600">
+              <span className="flex items-center gap-1 text-gray-500">
+                <span>Ingresos de la semana:</span>
+                {incomeData.isEstimated && (
+                  <span
+                    className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-semibold"
+                    title="Promedio semanal calculado a partir de ingresos mensuales registrados"
+                  >
+                    (Promedio base)
+                  </span>
+                )}
+              </span>
+              <span className="font-bold text-gray-900">
+                ${formatUSD(weeklyIncomeUSD)}
+              </span>
             </div>
-            <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ≈ Bs. {formatVES(Math.abs(weeklyAvailabilityVES))} (Saldo semanal)
-            </p>
-          </div>
 
-          <p className="mt-4 text-xs text-gray-500">
-            Ingresos semanales (${formatUSD(weeklyIncomeUSD)}) − Compromisos.
-          </p>
+            <div className="flex items-center justify-between text-gray-600">
+              <span className="text-gray-500">Compromisos:</span>
+              <span className="font-bold text-gray-900">
+                -${formatUSD(activeWeekUSD)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-1.5 border-t border-dashed border-gray-200">
+              <span className="font-semibold text-gray-700">Saldo restante:</span>
+              <span
+                className={clsx(
+                  "font-black text-xs",
+                  isPositiveAvailability ? "text-emerald-600" : "text-red-600"
+                )}
+              >
+                {weeklyAvailabilityUSD >= 0 ? "+" : "-"}${formatUSD(Math.abs(weeklyAvailabilityUSD))}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
