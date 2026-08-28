@@ -960,11 +960,7 @@ export async function getFixedExpensesForWeek(weekStartIso?: string) {
 
     const [fixedExpenses, logs] = await Promise.all([
       prisma.fixedExpense.findMany({
-        where: {
-          userId,
-          is_active: true,
-          deleted_at: null,
-        },
+        where: { userId },
         include: { category: true },
         orderBy: { createdAt: "desc" },
       }),
@@ -1090,11 +1086,7 @@ export async function getFixedExpensesForMonth(monthStartIso?: string) {
 
     const [fixedExpenses, logs] = await Promise.all([
       prisma.fixedExpense.findMany({
-        where: {
-          userId,
-          is_active: true,
-          deleted_at: null,
-        },
+        where: { userId },
         include: { category: true },
         orderBy: { createdAt: "desc" },
       }),
@@ -1357,8 +1349,6 @@ export async function createInstallmentExpense(data: {
           currency: currency || "USD",
           frequency: "MONTHLY",
           type: "INSTALLMENT",
-          is_active: true,
-          deleted_at: null,
           categoryId: validCategoryId,
           userId,
           isPaid: false,
@@ -1434,8 +1424,6 @@ export async function createFixedExpense(data: {
         categoryId,
         userId,
         type: type || "RECURRING",
-        is_active: true,
-        deleted_at: null,
         isPaid: false,
         dueDate: dueDate ? parseDate(dueDate) : null,
       },
@@ -1557,18 +1545,12 @@ export async function deleteFixedExpense(id: string) {
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const deleted = await prisma.fixedExpense.updateMany({
+    const deleted = await prisma.fixedExpense.deleteMany({
       where: { id, userId },
-      data: {
-        is_active: false,
-        deleted_at: new Date(),
-      },
     });
 
     if (deleted.count === 0) {
-      await prisma.fixedExpense.deleteMany({
-        where: { id, userId },
-      });
+      return { error: "Compromiso no encontrado o no autorizado." };
     }
 
     revalidatePath("/budgets");
@@ -1688,8 +1670,6 @@ export async function getPendingFixedExpenses() {
     const pendingExpenses = await prisma.fixedExpense.findMany({
       where: {
         userId,
-        is_active: true,
-        deleted_at: null,
         isPaid: false,
       },
       include: {
