@@ -125,6 +125,22 @@ export default function FixedExpensesClient({
     setCurrentMonth(new Date());
   };
 
+  // Función centralizada para re-sincronizar datos (Cache & Mutate)
+  const refreshData = async () => {
+    try {
+      const [weekExpenses, mExpenses, incData] = await Promise.all([
+        getFixedExpensesForWeek(currentWeekStart.toISOString()),
+        getFixedExpensesForMonth(currentMonth.toISOString()),
+        getWeeklyIncomeData(currentWeekStart.toISOString()),
+      ]);
+      if (Array.isArray(weekExpenses)) setExpenses(weekExpenses as any);
+      if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
+      if (incData) setIncomeData(incData);
+    } catch (err) {
+      console.error("Error refreshing data:", err);
+    }
+  };
+
   // Cargar datos al cambiar de semana, mes o modo de vista
   useEffect(() => {
     let isMounted = true;
@@ -148,7 +164,7 @@ export default function FixedExpensesClient({
           const [weekExpenses, incData, mExpenses] = await Promise.all([
             getFixedExpensesForWeek(currentWeekStart.toISOString()),
             getWeeklyIncomeData(currentWeekStart.toISOString()),
-            getFixedExpensesForMonth(currentWeekStart.toISOString()),
+            getFixedExpensesForMonth(currentMonth.toISOString()),
           ]);
           if (isMounted) {
             if (Array.isArray(weekExpenses)) {
@@ -172,7 +188,7 @@ export default function FixedExpensesClient({
     };
   }, [currentWeekStart, currentMonth, viewMode]);
 
-  // Helper to convert item amount to USD and VES
+  // Helper para convertir el monto de un ítem a USD y VES con la tasa activa
   const getItemUSD = (item: FixedExpenseItem) =>
     item.currency === "USD" ? item.amount : item.amount / exchangeRate;
   const getItemVES = (item: FixedExpenseItem) =>
@@ -182,17 +198,26 @@ export default function FixedExpensesClient({
   const activeWeekUSD = expenses.reduce((acc, item) => acc + getItemUSD(item), 0);
   const activeWeekVES = expenses.reduce((acc, item) => acc + getItemVES(item), 0);
 
-  // 2. Tarjeta 2 (Proyección Mensual): Suma de compromisos mensuales + (semanales x 4)
+  // 2. Tarjeta 2 (Proyección Obligatoria Mensual):
+  // - Compromisos Semanales Recurrentes: monto_semanal * 4
+  // - Compromisos Mensuales Recurrentes: sumar 1 vez los que vencen en el mes actual
+  // - Cuotas / Financiamientos (Cashea) y Gastos Únicos: sumar ÚNICAMENTE la cuota individual del mes actual (1 vez, NUNCA total ni * 4)
   const projectionSource = monthExpenses.length > 0 ? monthExpenses : expenses;
-  const monthlyItems = projectionSource.filter((e) => e.frequency === "MONTHLY");
-  const weeklyItems = projectionSource.filter((e) => e.frequency === "WEEKLY");
-  const monthlyUSD = monthlyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
-  const monthlyVES = monthlyItems.reduce((acc, item) => acc + getItemVES(item), 0);
-  const weeklyUSD = weeklyItems.reduce((acc, item) => acc + getItemUSD(item), 0);
-  const weeklyVES = weeklyItems.reduce((acc, item) => acc + getItemVES(item), 0);
 
-  const totalProjectedUSD = monthlyUSD + weeklyUSD * 4;
-  const totalProjectedVES = monthlyVES + weeklyVES * 4;
+  const weeklyRecurringUSD = projectionSource
+    .filter((e) => (e.type === "RECURRING" || !e.type) && e.frequency === "WEEKLY")
+    .reduce((acc, item) => acc + getItemUSD(item), 0) * 4;
+
+  const monthlyRecurringUSD = projectionSource
+    .filter((e) => (e.type === "RECURRING" || !e.type) && e.frequency === "MONTHLY")
+    .reduce((acc, item) => acc + getItemUSD(item), 0);
+
+  const installmentsAndOneTimeUSD = projectionSource
+    .filter((e) => e.type === "INSTALLMENT" || e.type === "ONE_TIME")
+    .reduce((acc, item) => acc + getItemUSD(item), 0);
+
+  const totalProjectedUSD = weeklyRecurringUSD + monthlyRecurringUSD + installmentsAndOneTimeUSD;
+  const totalProjectedVES = totalProjectedUSD * exchangeRate;
 
   // 3. Tarjeta 3 (Disponibilidad Semanal): (Ingresos Semanales - Compromisos Semanales)
   const weeklyIncomeUSD = incomeData.weeklyIncomeUSD;
@@ -243,55 +268,29 @@ export default function FixedExpensesClient({
     recurringDayOfWeek?: string;
     recurringDayOfMonth?: number;
   }) => {
-    const matchedCategory = categories.find((c) => c.id === data.categoryId);
-
-    if (data.type === "INSTALLMENT" && data.startDate && data.totalInstallments) {
-      // Create Cashea installment schedule
-      const res = await createInstallmentExpense({
-        description: data.description,
-        totalAmount: data.amount,
-        currency: data.currency,
-        categoryId: data.categoryId,
-        startDate: data.startDate,
-        installmentFrequency: data.installmentFrequency || "BIWEEKLY",
-        totalInstallments: data.totalInstallments,
-      });
-      if (res.success) {
-        const [weekExpenses, mExpenses] = await Promise.all([
-          getFixedExpensesForWeek(currentWeekStart.toISOString()),
-          getFixedExpensesForMonth(currentWeekStart.toISOString()),
-        ]);
-        if (Array.isArray(weekExpenses)) setExpenses(weekExpenses as any);
-        if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
+    try {
+      if (data.type === "INSTALLMENT" && data.startDate && data.totalInstallments) {
+        await createInstallmentExpense({
+          description: data.description,
+          totalAmount: data.amount,
+          currency: data.currency,
+          categoryId: data.categoryId,
+          startDate: data.startDate,
+          installmentFrequency: data.installmentFrequency || "BIWEEKLY",
+          totalInstallments: data.totalInstallments,
+        });
+      } else if (editingItem) {
+        await updateFixedExpense(editingItem.id, data);
+      } else {
+        await createFixedExpense({
+          ...data,
+          dueDate: data.dueDate || currentWeekStart.toISOString(),
+        });
       }
-      return;
-    }
-
-    if (editingItem) {
-      // Edit existing fixed expense
-      const res = await updateFixedExpense(editingItem.id, data);
-      if (res.success) {
-        const [wExpenses, mExpenses] = await Promise.all([
-          getFixedExpensesForWeek(currentWeekStart.toISOString()),
-          getFixedExpensesForMonth(currentWeekStart.toISOString()),
-        ]);
-        if (Array.isArray(wExpenses)) setExpenses(wExpenses as any);
-        if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
-      }
-    } else {
-      // Create new fixed expense
-      const res = await createFixedExpense({
-        ...data,
-        dueDate: data.dueDate || currentWeekStart.toISOString(),
-      });
-      if (res.success) {
-        const [wExpenses, mExpenses] = await Promise.all([
-          getFixedExpensesForWeek(currentWeekStart.toISOString()),
-          getFixedExpensesForMonth(currentWeekStart.toISOString()),
-        ]);
-        if (Array.isArray(wExpenses)) setExpenses(wExpenses as any);
-        if (Array.isArray(mExpenses)) setMonthExpenses(mExpenses as any);
-      }
+    } catch (err) {
+      console.error("Error submitting fixed expense modal:", err);
+    } finally {
+      await refreshData();
     }
   };
 
@@ -299,8 +298,11 @@ export default function FixedExpensesClient({
     setIsUpdating(id);
     const newPaidState = !currentPaid;
 
-    // Optimistic UI update
+    // Actualización optimista de UI en ambos listados
     setExpenses((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, isPaid: newPaidState } : e))
+    );
+    setMonthExpenses((prev) =>
       prev.map((e) => (e.id === id ? { ...e, isPaid: newPaidState } : e))
     );
 
@@ -310,9 +312,13 @@ export default function FixedExpensesClient({
         newPaidState,
         currentWeekStart.toISOString()
       );
+      await refreshData();
     } catch {
-      // Revert if error
+      // Revertir si hay error
       setExpenses((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, isPaid: currentPaid } : e))
+      );
+      setMonthExpenses((prev) =>
         prev.map((e) => (e.id === id ? { ...e, isPaid: currentPaid } : e))
       );
     } finally {
@@ -322,13 +328,24 @@ export default function FixedExpensesClient({
 
   const handleDelete = async (id: string) => {
     setIsUpdating(id);
-    const previous = [...expenses];
+    const previousExpenses = [...expenses];
+    const previousMonthExpenses = [...monthExpenses];
+
+    // Actualización optimista en ambos listados (semana y mes)
     setExpenses((prev) => prev.filter((e) => e.id !== id));
+    setMonthExpenses((prev) => prev.filter((e) => e.id !== id));
 
     try {
-      await deleteFixedExpense(id);
+      const res = await deleteFixedExpense(id);
+      if (res && "error" in res && res.error) {
+        setExpenses(previousExpenses);
+        setMonthExpenses(previousMonthExpenses);
+      } else {
+        await refreshData();
+      }
     } catch {
-      setExpenses(previous);
+      setExpenses(previousExpenses);
+      setMonthExpenses(previousMonthExpenses);
     } finally {
       setIsUpdating(null);
     }

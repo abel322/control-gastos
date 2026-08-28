@@ -138,6 +138,8 @@ model FixedExpense {
   currency    String   // "USD" or "VES"
   frequency   String   // "WEEKLY" or "MONTHLY"
   type        String   @default("RECURRING") // "RECURRING" or "ONE_TIME"
+  is_active   Boolean  @default(true)
+  deleted_at  DateTime?
   isPaid      Boolean  @default(false)
   dueDate     DateTime?
   createdAt   DateTime @default(now())
