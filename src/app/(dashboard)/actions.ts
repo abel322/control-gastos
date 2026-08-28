@@ -1,10 +1,11 @@
 "use server";
-
+ 
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { decode } from "next-auth/jwt";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 async function getUserId() {
   try {
@@ -1350,6 +1351,18 @@ export async function getFixedExpenses() {
   return getFixedExpensesForWeek();
 }
 
+const fixedExpenseSchema = z.object({
+  description: z.string().min(1, "La descripción es obligatoria"),
+  amount: z.number().positive("El monto debe ser mayor a 0"),
+  currency: z.string().min(1, "La moneda es obligatoria"),
+  frequency: z.string().min(1, "La frecuencia es obligatoria"),
+  categoryId: z.string().min(1, "La categoría es obligatoria"),
+  type: z.string().optional().nullable(),
+  dueDate: z.string().optional().nullable(),
+  recurringDayOfWeek: z.string().optional().nullable(),
+  recurringDayOfMonth: z.number().int().min(1).max(31).optional().nullable(),
+});
+
 /**
  * Create a new fixed expense.
  */
@@ -1361,6 +1374,8 @@ export async function createFixedExpense(data: {
   categoryId: string;
   type?: string;
   dueDate?: string;
+  recurringDayOfWeek?: string;
+  recurringDayOfMonth?: number;
 }) {
   try {
     const userId = await getUserId();
@@ -1368,10 +1383,13 @@ export async function createFixedExpense(data: {
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const { description, amount, currency, frequency, categoryId, type, dueDate } = data;
-    if (!description || !amount || !currency || !frequency || !categoryId) {
-      return { error: "Campos obligatorios faltantes" };
+    const parsed = fixedExpenseSchema.safeParse(data);
+    if (!parsed.success) {
+      console.error("Validation error in createFixedExpense:", parsed.error.format());
+      return { error: "Datos de entrada inválidos: " + parsed.error.issues.map(i => i.message).join(", ") };
     }
+
+    const { description, amount, currency, frequency, categoryId, type, dueDate } = parsed.data;
 
     const fixedExpense = await prisma.fixedExpense.create({
       data: {
@@ -1382,6 +1400,8 @@ export async function createFixedExpense(data: {
         categoryId,
         userId,
         type: type || "RECURRING",
+        is_active: true,
+        deleted_at: null,
         isPaid: false,
         dueDate: dueDate ? new Date(dueDate) : null,
       },
@@ -1393,7 +1413,7 @@ export async function createFixedExpense(data: {
     revalidatePath("/budgets");
     return { success: true, fixedExpense };
   } catch (error: any) {
-    console.error("Error creating fixed expense:", error);
+    console.error("Error in createFixedExpense Database call:", error);
 
     // Fallback for demo mode
     const dbCategories = [
@@ -1539,6 +1559,8 @@ export async function updateFixedExpense(
     categoryId: string;
     type?: string;
     dueDate?: string;
+    recurringDayOfWeek?: string;
+    recurringDayOfMonth?: number;
   }
 ) {
   try {
@@ -1547,10 +1569,13 @@ export async function updateFixedExpense(
       return { error: "No autorizado. Inicie sesión." };
     }
 
-    const { description, amount, currency, frequency, categoryId, type, dueDate } = data;
-    if (!description || !amount || !currency || !frequency || !categoryId) {
-      return { error: "Campos obligatorios faltantes" };
+    const parsed = fixedExpenseSchema.safeParse(data);
+    if (!parsed.success) {
+      console.error("Validation error in updateFixedExpense:", parsed.error.format());
+      return { error: "Datos de entrada inválidos: " + parsed.error.issues.map(i => i.message).join(", ") };
     }
+
+    const { description, amount, currency, frequency, categoryId, type, dueDate } = parsed.data;
 
     const existing = await prisma.fixedExpense.findMany({ where: { id, userId } });
     if (existing.length === 0) {
@@ -1576,7 +1601,7 @@ export async function updateFixedExpense(
     revalidatePath("/budgets");
     return { success: true, fixedExpense };
   } catch (error: any) {
-    console.error("Error updating fixed expense:", error);
+    console.error("Error in updateFixedExpense Database call:", error);
 
     const dbCategories = [
       { id: "1", name: "Alimentación", icon: "🍔", color: "#f59e0b" },

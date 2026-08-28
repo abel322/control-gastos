@@ -270,7 +270,7 @@ export default function FixedExpensesClient({
   }) => {
     try {
       if (data.type === "INSTALLMENT" && data.startDate && data.totalInstallments) {
-        await createInstallmentExpense({
+        const res = await createInstallmentExpense({
           description: data.description,
           totalAmount: data.amount,
           currency: data.currency,
@@ -279,16 +279,26 @@ export default function FixedExpensesClient({
           installmentFrequency: data.installmentFrequency || "BIWEEKLY",
           totalInstallments: data.totalInstallments,
         });
+        if (res && "error" in res && res.error) {
+          throw new Error(res.error);
+        }
       } else if (editingItem) {
-        await updateFixedExpense(editingItem.id, data);
+        const res = await updateFixedExpense(editingItem.id, data);
+        if (res && "error" in res && res.error) {
+          throw new Error(res.error);
+        }
       } else {
-        await createFixedExpense({
+        const res = await createFixedExpense({
           ...data,
           dueDate: data.dueDate || currentWeekStart.toISOString(),
         });
+        if (res && "error" in res && res.error) {
+          throw new Error(res.error);
+        }
       }
     } catch (err) {
       console.error("Error submitting fixed expense modal:", err);
+      throw err;
     } finally {
       await refreshData();
     }

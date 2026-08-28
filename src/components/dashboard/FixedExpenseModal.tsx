@@ -168,11 +168,11 @@ export default function FixedExpenseModal({
     }
 
     let calculatedDueDate: string | undefined = undefined;
-    let submitRecurringDayOfWeek: string | undefined = undefined;
-    let submitRecurringDayOfMonth: number | undefined = undefined;
-    let submitStartDate: string | undefined = undefined;
-    let submitInstallmentFrequency: "BIWEEKLY" | "MONTHLY" | undefined = undefined;
-    let submitTotalInstallments: number | undefined = undefined;
+    let submitRecurringDayOfWeek: string | null = null;
+    let submitRecurringDayOfMonth: number | null = null;
+    let submitStartDate: string | null = null;
+    let submitInstallmentFrequency: "BIWEEKLY" | "MONTHLY" | null = null;
+    let submitTotalInstallments: number | null = null;
 
     if (type === "RECURRING") {
       const ref = defaultDueDate ? new Date(defaultDueDate) : new Date();
@@ -195,6 +195,7 @@ export default function FixedExpenseModal({
         targetDate.setDate(monday.getDate() + (dayOfWeekNum - 1));
         calculatedDueDate = targetDate.toISOString();
         submitRecurringDayOfWeek = recurringDayOfWeek;
+        submitRecurringDayOfMonth = null;
       } else if (frequency === "MONTHLY") {
         const dayOfMonthNum = parseInt(recurringDayOfMonth, 10);
         if (isNaN(dayOfMonthNum) || dayOfMonthNum < 1 || dayOfMonthNum > 31) {
@@ -206,6 +207,7 @@ export default function FixedExpenseModal({
         const targetDate = new Date(refCopy.getFullYear(), refCopy.getMonth(), dayOfMonthNum, 12, 0, 0);
         calculatedDueDate = targetDate.toISOString();
         submitRecurringDayOfMonth = dayOfMonthNum;
+        submitRecurringDayOfWeek = null;
       }
     } else if (type === "ONE_TIME") {
       if (!dueDate) {
@@ -213,6 +215,8 @@ export default function FixedExpenseModal({
         return;
       }
       calculatedDueDate = dueDate;
+      submitRecurringDayOfWeek = null;
+      submitRecurringDayOfMonth = null;
     } else if (type === "INSTALLMENT") {
       const parsedInstallments = parseInt(totalInstallments, 10);
       if (isNaN(parsedInstallments) || parsedInstallments <= 0) {
@@ -226,6 +230,8 @@ export default function FixedExpenseModal({
       submitStartDate = startDate;
       submitInstallmentFrequency = installmentFrequency;
       submitTotalInstallments = parsedInstallments;
+      submitRecurringDayOfWeek = null;
+      submitRecurringDayOfMonth = null;
     }
 
     setIsSubmitting(true);
@@ -238,11 +244,11 @@ export default function FixedExpenseModal({
         type,
         categoryId,
         dueDate: calculatedDueDate,
-        startDate: submitStartDate,
-        installmentFrequency: submitInstallmentFrequency,
-        totalInstallments: submitTotalInstallments,
-        recurringDayOfWeek: submitRecurringDayOfWeek,
-        recurringDayOfMonth: submitRecurringDayOfMonth,
+        startDate: submitStartDate || undefined,
+        installmentFrequency: submitInstallmentFrequency || undefined,
+        totalInstallments: submitTotalInstallments || undefined,
+        recurringDayOfWeek: submitRecurringDayOfWeek || undefined,
+        recurringDayOfMonth: submitRecurringDayOfMonth || undefined,
       });
       onClose();
     } catch (err: any) {
