@@ -608,7 +608,7 @@ export default function FixedExpenseModal({
             <div className="space-y-1.5">
               <label htmlFor="amount" className="text-xs font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1">
                 <CreditCard className="h-3.5 w-3.5 text-gray-400" />
-                <span>Monto</span>
+                <span>{type === "INSTALLMENT" ? "Monto Total a Financiar" : "Monto"}</span>
               </label>
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500 font-medium">

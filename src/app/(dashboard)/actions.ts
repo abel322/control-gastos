@@ -1272,6 +1272,25 @@ export async function getWeeklyIncomeUSD(weekStartIso?: string): Promise<number>
 }
 
 /**
+ * Helper to parse dates safely (supports DD/MM/YYYY, ISO string, or Date instances).
+ */
+const parseDate = (d: string | Date | null | undefined): Date => {
+  if (!d) return new Date();
+  if (d instanceof Date) return d;
+  if (typeof d === "string") {
+    if (d.includes("/")) {
+      const [day, month, year] = d.split("/").map(Number);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day, 12, 0, 0);
+      }
+    }
+    const parsed = new Date(d);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
+};
+
+/**
  * Create multiple installment fixed expense records (e.g. Cashea).
  */
 export async function createInstallmentExpense(data: {
@@ -1300,13 +1319,27 @@ export async function createInstallmentExpense(data: {
     } = data;
 
     if (!description || !totalAmount || totalAmount <= 0 || !totalInstallments || totalInstallments <= 0) {
-      return { error: "Datos de cuotas inválidos" };
+      return { error: "Datos de cuotas inválidos. Ingrese un monto total y número de cuotas válidos." };
+    }
+
+    let validCategoryId = categoryId;
+    if (!validCategoryId) {
+      const categories = await prisma.category.findMany({ take: 1 });
+      if (categories.length > 0) {
+        validCategoryId = categories[0].id;
+      } else {
+        return { error: "Por favor, seleccione una categoría válida." };
+      }
+    }
+
+    const baseDate = parseDate(startDate);
+    if (isNaN(baseDate.getTime())) {
+      return { error: "La fecha de inicio de cuotas es inválida." };
     }
 
     const installmentAmount = totalAmount / totalInstallments;
-    const baseDate = new Date(startDate);
-
     const createdRecords = [];
+
     for (let i = 1; i <= totalInstallments; i++) {
       const dueDate = new Date(baseDate);
       if (installmentFrequency === "BIWEEKLY") {
@@ -1321,12 +1354,12 @@ export async function createInstallmentExpense(data: {
         data: {
           description: installmentDescription,
           amount: installmentAmount,
-          currency,
+          currency: currency || "USD",
           frequency: "MONTHLY",
           type: "INSTALLMENT",
           is_active: true,
           deleted_at: null,
-          categoryId,
+          categoryId: validCategoryId,
           userId,
           isPaid: false,
           dueDate,
@@ -1337,10 +1370,11 @@ export async function createInstallmentExpense(data: {
     }
 
     revalidatePath("/budgets");
+    revalidatePath("/");
     return { success: true, count: createdRecords.length, records: createdRecords };
   } catch (error: any) {
     console.error("Error creating installment expense:", error);
-    return { error: "Error al generar las cuotas." };
+    return { error: `Error al generar las cuotas: ${error?.message || String(error)}` };
   }
 }
 
@@ -1403,7 +1437,7 @@ export async function createFixedExpense(data: {
         is_active: true,
         deleted_at: null,
         isPaid: false,
-        dueDate: dueDate ? new Date(dueDate) : null,
+        dueDate: dueDate ? parseDate(dueDate) : null,
       },
       include: {
         category: true,
@@ -1591,7 +1625,7 @@ export async function updateFixedExpense(
         frequency,
         categoryId,
         type: type || "RECURRING",
-        dueDate: dueDate ? new Date(dueDate) : null,
+        dueDate: dueDate ? parseDate(dueDate) : null,
       },
       include: {
         category: true,
