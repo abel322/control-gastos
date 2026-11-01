@@ -6,6 +6,7 @@ import { decode } from "next-auth/jwt";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { startOfWeek, endOfWeek } from "date-fns";
 
 async function getUserId() {
   try {
@@ -182,6 +183,89 @@ export async function getExpensesByCategory(userId?: string) {
 /**
  * Get all expenses with category information.
  */
+/**
+ * Get expenses for a specific week range.
+ */
+export async function getExpensesForWeek(weekStartIso?: string, weekEndIso?: string) {
+  try {
+    const userId = await getUserId();
+    
+    if (!userId) {
+      throw new Error("No autorizado");
+    }
+
+    let start: Date;
+    let end: Date;
+
+    if (weekStartIso && weekEndIso) {
+      start = new Date(weekStartIso);
+      end = new Date(weekEndIso);
+    } else {
+      const targetDate = weekStartIso ? new Date(weekStartIso) : new Date();
+      start = startOfWeek(targetDate, { weekStartsOn: 1 });
+      start.setHours(0, 0, 0, 0);
+      end = endOfWeek(targetDate, { weekStartsOn: 1 });
+      end.setHours(23, 59, 59, 999);
+    }
+
+    const expenses = await prisma.expense.findMany({
+      where: {
+        userId: userId,
+        date: {
+          gte: start,
+          lte: end,
+        },
+      },
+      include: {
+        category: true,
+      },
+      orderBy: {
+        date: "desc",
+      },
+    });
+
+    return expenses;
+  } catch (error) {
+    console.error("Error fetching expenses for week:", error);
+    // Return mock data if DB fails, filtered by date
+    const now = new Date();
+    const start = weekStartIso ? new Date(weekStartIso) : startOfWeek(now, { weekStartsOn: 1 });
+    const end = weekEndIso ? new Date(weekEndIso) : endOfWeek(now, { weekStartsOn: 1 });
+
+    const mock = [
+      {
+        id: "1",
+        description: "Compra en Automercado Plaza's",
+        amount: 2500.0,
+        currency: "VES",
+        exchangeRate: 1420.0,
+        equivalentAmount: 1.76,
+        date: new Date(),
+        category: { name: "Alimentación", color: "#8b5cf6", icon: "Utensils" },
+        categoryId: "1",
+        source: "MANUAL",
+      },
+      {
+        id: "2",
+        description: "Suscripción Netflix",
+        amount: 15.99,
+        currency: "USD",
+        exchangeRate: 1420.0,
+        equivalentAmount: 22705.8,
+        date: new Date(Date.now() - 86400000),
+        category: { name: "Entretenimiento", color: "#ef4444", icon: "Tv" },
+        categoryId: "2",
+        source: "AUTOMATIC",
+      },
+    ];
+
+    return mock.filter((m) => {
+      const d = new Date(m.date);
+      return d >= start && d <= end;
+    });
+  }
+}
+
 export async function getExpenses(userId?: string) {
   try {
     const userId = await getUserId();

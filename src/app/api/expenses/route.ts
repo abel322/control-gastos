@@ -10,11 +10,16 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const month = searchParams.get("month"); // e.g., "2025-05"
+    const weekStart = searchParams.get("weekStart") || searchParams.get("startDate");
+    const weekEnd = searchParams.get("weekEnd") || searchParams.get("endDate");
 
     let startDate: Date;
     let endDate: Date;
 
-    if (month) {
+    if (weekStart && weekEnd) {
+      startDate = new Date(weekStart);
+      endDate = new Date(weekEnd);
+    } else if (month) {
       const [year, m] = month.split("-").map(Number);
       startDate = new Date(year, m - 1, 1);
       endDate = new Date(year, m, 0, 23, 59, 59);

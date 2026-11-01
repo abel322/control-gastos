@@ -29,6 +29,7 @@ interface ExpenseModalProps {
     categoryId: string;
     date: Date | string;
   } | null;
+  defaultDate?: Date | string;
 }
 
 export default function ExpenseModal({
@@ -37,6 +38,7 @@ export default function ExpenseModal({
   categories,
   onSubmit,
   initialData,
+  defaultDate,
 }: ExpenseModalProps) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -59,7 +61,11 @@ export default function ExpenseModal({
         const d = new Date(initialData.date);
         setDate(d.toISOString().split("T")[0]);
       } else {
-        const today = new Date().toISOString().split("T")[0];
+        const d = defaultDate ? new Date(defaultDate) : new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        const today = `${year}-${month}-${day}`;
         setDate(today);
         setDescription("");
         setAmount("");
@@ -68,7 +74,7 @@ export default function ExpenseModal({
       }
       setError(null);
     }
-  }, [isOpen, categories, initialData]);
+  }, [isOpen, categories, initialData, defaultDate]);
 
   // Handle click outside to close
   useEffect(() => {

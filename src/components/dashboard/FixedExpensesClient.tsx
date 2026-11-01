@@ -84,7 +84,8 @@ export default function FixedExpensesClient({
   const [incomeData, setIncomeData] = useState<WeeklyIncomeSummary>({
     totalIncomeUSD: 0,
     actualIncomeUSD: 0,
-    fallbackIncomeUSD: 0,
+    weeklyIncomeUSD: 0,
+    monthlyProjectedIncomeUSD: 0,
     isEstimated: false,
     incomesCount: 0,
   });

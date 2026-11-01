@@ -1,28 +1,47 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Plus,
   Search,
   Filter,
   Download,
-  MoreHorizontal,
   Calendar as CalendarIcon,
+  CalendarDays,
   Tag as TagIcon,
   CreditCard,
   ArrowUpDown,
   X,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
   Info,
   Pencil,
   Trash2,
-  FileUp
+  FileUp,
+  ArrowLeftRight,
+  Loader2,
+  Receipt,
 } from "lucide-react";
+import {
+  startOfWeek,
+  endOfWeek,
+  subWeeks,
+  addWeeks,
+  format,
+  isSameWeek,
+} from "date-fns";
+import { es } from "date-fns/locale";
 import { formatVES, formatUSD } from "@/lib/format";
 import ExpenseModal from "./ExpenseModal";
 import ImportStatementModal from "@/components/ImportStatementModal";
-import WeeklyIncome from "./WeeklyIncome";
-import { createExpenseAction, updateExpenseAction, deleteExpenseAction, getExpenses } from "@/app/(dashboard)/actions";
+import {
+  createExpenseAction,
+  updateExpenseAction,
+  deleteExpenseAction,
+  getExpensesForWeek,
+} from "@/app/(dashboard)/actions";
 import clsx from "clsx";
 
 interface Category {
@@ -53,36 +72,65 @@ interface ExpensesClientProps {
   initialExpenses: Expense[];
   categories: Category[];
   exchangeRate: number;
-  totalIncomeUSD: number;
+  totalIncomeUSD?: number;
 }
 
 export default function ExpensesClient({
   initialExpenses,
   categories,
   exchangeRate,
-  totalIncomeUSD,
+  totalIncomeUSD = 0,
 }: ExpensesClientProps) {
   const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [expenseToEdit, setExpenseToEdit] = useState<Expense | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  async function handleImportSuccess() {
-    try {
-      const updated = await getExpenses();
-      setExpenses(updated as any);
-    } catch (err) {
-      console.error("Error refreshing expenses after import:", err);
-    }
-  }
-  
+  // 1. Estado de Navegación de Fecha para Semana (Lunes a Domingo por defecto)
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
+    startOfWeek(new Date(), { weekStartsOn: 1 })
+  );
+
+  const handlePrevWeek = () => {
+    setCurrentWeekStart((prev) => subWeeks(prev, 1));
+  };
+
+  const handleNextWeek = () => {
+    setCurrentWeekStart((prev) => addWeeks(prev, 1));
+  };
+
+  const handleResetToCurrentWeek = () => {
+    setCurrentWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  };
+
+  const weekEnd = useMemo(
+    () => endOfWeek(currentWeekStart, { weekStartsOn: 1 }),
+    [currentWeekStart]
+  );
+
+  const isCurrentWeek = useMemo(
+    () => isSameWeek(currentWeekStart, new Date(), { weekStartsOn: 1 }),
+    [currentWeekStart]
+  );
+
+  const weekRangeLabel = useMemo(() => {
+    return `${format(currentWeekStart, "dd MMM", { locale: es })} - ${format(
+      weekEnd,
+      "dd MMM",
+      { locale: es }
+    )}`;
+  }, [currentWeekStart, weekEnd]);
+
   // Search and filter states
   const [searchTerm, setSearchTerm] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [selectedCurrency, setSelectedCurrency] = useState<string>("ALL");
-  const [sortBy, setSortBy] = useState<"date-desc" | "date-asc" | "amount-desc" | "amount-asc">("date-desc");
-  
+  const [sortBy, setSortBy] = useState<
+    "date-desc" | "date-asc" | "amount-desc" | "amount-asc"
+  >("date-desc");
+
   // Notice banner state for database fallbacks
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
@@ -107,6 +155,47 @@ export default function ExpensesClient({
     fetchLiveRate();
   }, [exchangeRate]);
 
+  // Centralized function to fetch data for the selected week
+  const refreshExpenses = useCallback(async (weekDate: Date) => {
+    setIsLoading(true);
+    try {
+      const start = startOfWeek(weekDate, { weekStartsOn: 1 });
+      start.setHours(0, 0, 0, 0);
+      const end = endOfWeek(weekDate, { weekStartsOn: 1 });
+      end.setHours(23, 59, 59, 999);
+
+      const weekExpenses = await getExpensesForWeek(
+        start.toISOString(),
+        end.toISOString()
+      );
+      if (Array.isArray(weekExpenses)) {
+        setExpenses(weekExpenses as any);
+      }
+    } catch (err) {
+      console.error("Error refreshing expenses for week:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Avoid duplicate fetch on initial render
+  const isFirstMount = useRef(true);
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    refreshExpenses(currentWeekStart);
+  }, [currentWeekStart, refreshExpenses]);
+
+  async function handleImportSuccess() {
+    try {
+      await refreshExpenses(currentWeekStart);
+    } catch (err) {
+      console.error("Error refreshing expenses after import:", err);
+    }
+  }
+
   // Handle new or edit expense submission
   async function handleCreateOrUpdateExpense(data: {
     description: string;
@@ -117,30 +206,23 @@ export default function ExpensesClient({
   }) {
     setWarningMessage(null);
     let result;
-    
+
     if (expenseToEdit) {
       result = await updateExpenseAction(expenseToEdit.id, data);
     } else {
       result = await createExpenseAction(data);
     }
-    
+
     if (result.error) {
       throw new Error(result.error);
     }
-    
-    if (result.expense) {
-      const savedExpense = result.expense as any;
-      if (expenseToEdit) {
-        setExpenses((prev) => prev.map((e) => e.id === savedExpense.id ? savedExpense : e));
-      } else {
-        setExpenses((prev) => [savedExpense, ...prev]);
-      }
-      
-      if (result.warning) {
-        setWarningMessage(result.warning);
-        setTimeout(() => setWarningMessage(null), 8000);
-      }
+
+    if (result.warning) {
+      setWarningMessage(result.warning);
+      setTimeout(() => setWarningMessage(null), 8000);
     }
+
+    await refreshExpenses(currentWeekStart);
   }
 
   // Handle delete expense
@@ -149,22 +231,39 @@ export default function ExpensesClient({
     if (!isConfirmed) return;
 
     setWarningMessage(null);
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+
     const result = await deleteExpenseAction(id);
-    
+
     if (result.error) {
       setWarningMessage(result.error);
       setTimeout(() => setWarningMessage(null), 8000);
+      await refreshExpenses(currentWeekStart);
       return;
     }
 
-    if (result.success) {
-      setExpenses((prev) => prev.filter((e) => e.id !== id));
-      if (result.warning) {
-        setWarningMessage(result.warning);
-        setTimeout(() => setWarningMessage(null), 8000);
-      }
+    if (result.warning) {
+      setWarningMessage(result.warning);
+      setTimeout(() => setWarningMessage(null), 8000);
     }
+    await refreshExpenses(currentWeekStart);
   }
+
+  // Helper conversion for items
+  const getItemUSD = useCallback(
+    (exp: Expense) =>
+      exp.currency === "USD" ? exp.amount : exp.amount / liveBcvRate,
+    [liveBcvRate]
+  );
+
+  // Dynamic Weekly Totals
+  const weeklyTotalUSD = useMemo(() => {
+    return expenses.reduce((sum, exp) => sum + getItemUSD(exp), 0);
+  }, [expenses, getItemUSD]);
+
+  const weeklyTotalVES = useMemo(() => {
+    return weeklyTotalUSD * liveBcvRate;
+  }, [weeklyTotalUSD, liveBcvRate]);
 
   // Filter and sort computation
   const filteredAndSortedExpenses = useMemo(() => {
@@ -192,8 +291,7 @@ export default function ExpensesClient({
     result.sort((a, b) => {
       const dateA = new Date(a.date).getTime();
       const dateB = new Date(b.date).getTime();
-      
-      // We calculate amounts in USD for unified comparison when sorting by amount
+
       const amountA = a.currency === "USD" ? a.amount : a.amount / a.exchangeRate;
       const amountB = b.currency === "USD" ? b.amount : b.amount / b.exchangeRate;
 
@@ -215,7 +313,9 @@ export default function ExpensesClient({
 
   // Export mock action
   function handleExport() {
-    alert("Exportación de gastos iniciada (CSV/PDF). En producción esto descargará tu reporte.");
+    alert(
+      "Exportación de gastos iniciada (CSV/PDF). En producción esto descargará tu reporte."
+    );
   }
 
   // Helper to toggle sort modes
@@ -236,7 +336,7 @@ export default function ExpensesClient({
           <div className="flex-1">
             <span className="font-semibold">Nota del sistema:</span> {warningMessage}
           </div>
-          <button 
+          <button
             onClick={() => setWarningMessage(null)}
             className="text-amber-500 hover:text-amber-700 transition-colors"
           >
@@ -245,28 +345,35 @@ export default function ExpensesClient({
         </div>
       )}
 
-      {/* Grid Container for Header and Weekly Income */}
+      {/* Grid Container for Header and Weekly Expense Metric */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 items-start">
-        {/* Page Title & Desc */}
+        {/* Page Title & Actions */}
         <div className="lg:col-span-2 space-y-3.5">
           <div>
-            <h1 className="text-3xl font-black tracking-tight text-gray-900">Gastos</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-3xl font-black tracking-tight text-gray-900">
+                Gastos
+              </h1>
+              <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700">
+                Vista Semanal
+              </span>
+            </div>
             <p className="mt-1.5 text-sm text-gray-500 font-medium">
-              Gestiona y visualiza todos tus movimientos bimonetarios al tipo de cambio actual
+              Gestiona y visualiza tus movimientos por semana al tipo de cambio oficial BCV
             </p>
           </div>
-          
-          <div className="flex items-center gap-3">
+
+          <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => setIsImportModalOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 shadow-sm hover:bg-purple-100 transition-all active:scale-98"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 shadow-sm hover:bg-purple-100 transition-all active:scale-98 cursor-pointer"
             >
               <FileUp className="h-4 w-4 text-purple-600" />
               <span>Importar Estado de Cuenta</span>
             </button>
             <button
               onClick={handleExport}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50 transition-all active:scale-98"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50 transition-all active:scale-98 cursor-pointer"
             >
               <Download className="h-4 w-4 text-gray-500" />
               <span>Exportar</span>
@@ -276,7 +383,7 @@ export default function ExpensesClient({
                 setExpenseToEdit(null);
                 setIsModalOpen(true);
               }}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:bg-purple-700 transition-all active:scale-95 hover:shadow-purple-200 hover:shadow-lg"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:bg-purple-700 transition-all active:scale-95 hover:shadow-purple-200 hover:shadow-lg cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               <span>Nuevo Gasto</span>
@@ -284,15 +391,103 @@ export default function ExpensesClient({
           </div>
         </div>
 
-        {/* Weekly Income Card */}
+        {/* Metric Card: Total Gastos Semanales */}
         <div className="lg:col-span-1">
-          <WeeklyIncome bcvRate={liveBcvRate} totalIncomeUSD={totalIncomeUSD} />
+          <div className="relative overflow-hidden rounded-2xl bg-white p-5 shadow-sm border border-gray-150 transition-all duration-300 hover:shadow-md hover:border-purple-200 group">
+            {/* Background soft glow decoration */}
+            <div className="absolute top-0 right-0 w-24 h-24 bg-purple-50 rounded-full blur-2xl -mr-5 -mt-5 opacity-70 transition-all duration-300 group-hover:bg-purple-100" />
+
+            <div className="relative flex items-center justify-between">
+              <div className="flex flex-col flex-1 min-w-0 pr-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                  <CreditCard className="h-3.5 w-3.5 text-purple-600" />
+                  Total Gastos
+                </span>
+
+                <div className="mt-2.5 flex items-baseline gap-1 select-none">
+                  <span className="text-2xl font-black text-gray-900 leading-none">
+                    $ {formatUSD(weeklyTotalUSD)}
+                  </span>
+                </div>
+
+                {/* VES Equivalent estimate */}
+                <div className="mt-1 text-xs text-gray-500 flex items-center gap-1 font-medium">
+                  <ArrowLeftRight className="h-3 w-3 text-gray-400" />
+                  <span>≈ Bs. {formatVES(weeklyTotalVES)}</span>
+                  <span className="text-[9px] text-gray-400 font-normal">(tasa BCV)</span>
+                </div>
+
+                {/* Week details indicator */}
+                <div className="mt-2.5 flex items-center gap-1.5 text-xs text-purple-700 bg-purple-50/80 px-2.5 py-1 rounded-lg w-fit font-semibold">
+                  <span>{expenses.length} gasto(s) esta semana</span>
+                </div>
+              </div>
+
+              {/* Decorative token icon */}
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-50 border border-purple-100 shadow-sm text-purple-600 transition-all duration-300 group-hover:scale-105 group-hover:bg-purple-600 group-hover:text-white group-hover:border-purple-600">
+                <CreditCard className="h-5 w-5" />
+              </div>
+            </div>
+
+            {/* Top micro-bar accent */}
+            <div className="absolute top-0 left-0 h-1 w-full bg-purple-600 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left" />
+          </div>
         </div>
       </div>
 
       {/* Table Container */}
-      <div className="overflow-hidden rounded-2xl border border-gray-150 bg-white shadow-sm transition-all duration-300">
-        {/* Table Toolbar */}
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300">
+        {/* Componente Selector de Semana (UI Header de la Tabla) */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-gray-200 px-6 py-4 bg-gradient-to-r from-purple-50/40 via-white to-gray-50/40">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-purple-600" />
+            <span className="text-sm font-bold text-gray-900">
+              Navegación por Semana
+            </span>
+          </div>
+
+          {/* Centered Navigation Controls */}
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5 shadow-sm">
+            <button
+              onClick={handlePrevWeek}
+              disabled={isLoading}
+              className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              title="Semana anterior"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <span className="text-sm font-extrabold text-gray-900 min-w-[140px] text-center capitalize px-2">
+              {weekRangeLabel}
+            </span>
+
+            <button
+              onClick={handleNextWeek}
+              disabled={isLoading}
+              className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              title="Semana siguiente"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!isCurrentWeek ? (
+            <button
+              onClick={handleResetToCurrentWeek}
+              disabled={isLoading}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200/60 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Semana Actual</span>
+            </button>
+          ) : (
+            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1 rounded-full">
+              Semana en curso
+            </span>
+          )}
+        </div>
+
+        {/* Table Toolbar (Search, Filter, Sort) */}
         <div className="flex flex-col gap-3.5 border-b border-gray-100 p-4 sm:flex-row sm:items-center sm:justify-between bg-gray-50/50">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -312,11 +507,11 @@ export default function ExpensesClient({
               </button>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-98 ${
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-98 cursor-pointer ${
                 showFilters || selectedCategory !== "ALL" || selectedCurrency !== "ALL"
                   ? "border-purple-200 bg-purple-50 text-purple-700"
                   : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
@@ -328,7 +523,7 @@ export default function ExpensesClient({
                 <span className="h-2 w-2 rounded-full bg-purple-600" />
               )}
             </button>
-            
+
             <div className="relative">
               <select
                 value={sortBy}
@@ -357,7 +552,7 @@ export default function ExpensesClient({
                 <select
                   value={selectedCategory}
                   onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="w-full appearance-none rounded-xl border border-gray-250 bg-white pl-3 pr-9 py-2 text-xs font-semibold text-gray-700 focus:outline-none"
+                  className="w-full appearance-none rounded-xl border border-gray-250 bg-white pl-3 pr-9 py-2 text-xs font-semibold text-gray-700 focus:outline-none cursor-pointer"
                 >
                   <option value="ALL">Todas las categorías</option>
                   {categories.map((cat) => (
@@ -380,7 +575,7 @@ export default function ExpensesClient({
                   <button
                     key={cur}
                     onClick={() => setSelectedCurrency(cur)}
-                    className={`flex-1 rounded-lg text-xs font-bold transition-all ${
+                    className={`flex-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                       selectedCurrency === cur
                         ? "bg-purple-600 text-white shadow-sm"
                         : "text-gray-500 hover:text-gray-700"
@@ -391,7 +586,7 @@ export default function ExpensesClient({
                 ))}
               </div>
             </div>
-            
+
             {/* Clear Filters Button */}
             {(selectedCategory !== "ALL" || selectedCurrency !== "ALL") && (
               <div className="sm:col-span-2 flex justify-end">
@@ -400,7 +595,7 @@ export default function ExpensesClient({
                     setSelectedCategory("ALL");
                     setSelectedCurrency("ALL");
                   }}
-                  className="text-xs font-bold text-purple-600 hover:text-purple-700 transition-colors flex items-center gap-1"
+                  className="text-xs font-bold text-purple-600 hover:text-purple-700 transition-colors flex items-center gap-1 cursor-pointer"
                 >
                   <X className="h-3.5 w-3.5" />
                   <span>Limpiar filtros</span>
@@ -411,22 +606,71 @@ export default function ExpensesClient({
         )}
 
         {/* Table Content */}
-        <div className="overflow-x-auto">
-          {filteredAndSortedExpenses.length === 0 ? (
+        <div className="overflow-x-auto relative min-h-[220px]">
+          {isLoading && (
+            <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] z-10 flex items-center justify-center transition-all">
+              <div className="flex items-center gap-2.5 text-sm font-semibold text-purple-700 bg-white px-4 py-2.5 rounded-xl shadow-md border border-purple-100 animate-fade-in">
+                <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                <span>Cargando gastos de la semana...</span>
+              </div>
+            </div>
+          )}
+
+          {expenses.length === 0 ? (
+            /* Empty State when no expenses exist in the selected week */
+            <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-50 text-purple-600 mb-4 shadow-sm">
+                <Receipt className="h-7 w-7" />
+              </div>
+              <h3 className="text-base font-bold text-gray-900">
+                No hay gastos registrados en esta semana
+              </h3>
+              <p className="mt-1 text-xs text-gray-500 max-w-sm">
+                No se encontraron gastos registrados entre el {weekRangeLabel}. Puedes registrar un nuevo gasto para esta semana.
+              </p>
+              <button
+                onClick={() => {
+                  setExpenseToEdit(null);
+                  setIsModalOpen(true);
+                }}
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-purple-700 transition-all active:scale-95 hover:shadow-purple-200 hover:shadow-md cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                <span>+ Nuevo Gasto</span>
+              </button>
+            </div>
+          ) : filteredAndSortedExpenses.length === 0 ? (
+            /* Filtered out empty state */
             <div className="text-center py-12 bg-white">
               <div className="mx-auto w-12 h-12 flex items-center justify-center rounded-full bg-gray-50 border border-gray-100 text-gray-400 mb-3">
                 <Search className="h-5 w-5" />
               </div>
-              <h3 className="text-sm font-bold text-gray-900">No se encontraron gastos</h3>
+              <h3 className="text-sm font-bold text-gray-900">
+                No se encontraron gastos
+              </h3>
               <p className="text-xs text-gray-500 mt-1">
                 Intenta ajustando tu búsqueda o filtros actuales.
               </p>
+              {(selectedCategory !== "ALL" ||
+                selectedCurrency !== "ALL" ||
+                searchTerm) && (
+                <button
+                  onClick={() => {
+                    setSelectedCategory("ALL");
+                    setSelectedCurrency("ALL");
+                    setSearchTerm("");
+                  }}
+                  className="mt-3 text-xs font-bold text-purple-600 hover:text-purple-700 transition-colors cursor-pointer"
+                >
+                  Limpiar filtros
+                </button>
+              )}
             </div>
           ) : (
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50/50 border-b border-gray-100">
-                  <th 
+                  <th
                     onClick={() => toggleSort("date")}
                     className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400 cursor-pointer hover:text-gray-600 select-none"
                   >
@@ -448,7 +692,7 @@ export default function ExpensesClient({
                   <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">
                     Origen
                   </th>
-                  <th 
+                  <th
                     onClick={() => toggleSort("amount")}
                     className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400 text-right cursor-pointer hover:text-gray-600 select-none"
                   >
@@ -467,7 +711,7 @@ export default function ExpensesClient({
                 {filteredAndSortedExpenses.map((expense) => {
                   const expenseDate = new Date(expense.date);
                   const isVES = expense.currency === "VES";
-                  
+
                   return (
                     <tr
                       key={expense.id}
@@ -478,7 +722,7 @@ export default function ExpensesClient({
                           {expenseDate.toLocaleDateString("es-VE", {
                             day: "2-digit",
                             month: "short",
-                            year: "numeric"
+                            year: "numeric",
                           })}
                         </span>
                       </td>
@@ -502,46 +746,70 @@ export default function ExpensesClient({
                         >
                           <span
                             className="h-1.5 w-1.5 rounded-full"
-                            style={{ backgroundColor: expense.category.color || "#8b5cf6" }}
+                            style={{
+                              backgroundColor: expense.category.color || "#8b5cf6",
+                            }}
                           />
                           {expense.category.name}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={clsx(
-                          "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border tracking-wide",
-                          expense.source === "AUTOMATIC"
-                            ? "bg-sky-50 text-sky-700 border-sky-200"
-                            : "bg-gray-50 text-gray-600 border-gray-200"
-                        )}>
-                          {expense.source === "AUTOMATIC" ? "✉ Automático" : "✏ Manual"}
+                        <span
+                          className={clsx(
+                            "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border tracking-wide",
+                            expense.source === "AUTOMATIC"
+                              ? "bg-sky-50 text-sky-700 border-sky-200"
+                              : "bg-gray-50 text-gray-600 border-gray-200"
+                          )}
+                        >
+                          {expense.source === "AUTOMATIC"
+                            ? "✉ Automático"
+                            : "✏ Manual"}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <div className="flex flex-col items-end">
-                          <span className={isVES ? "text-sm font-bold text-gray-900" : "text-xs text-gray-400 font-medium"}>
-                            Bs. {formatVES(isVES ? expense.amount : expense.amount * liveBcvRate)}
+                          <span
+                            className={
+                              isVES
+                                ? "text-sm font-bold text-gray-900"
+                                : "text-xs text-gray-400 font-medium"
+                            }
+                          >
+                            Bs.{" "}
+                            {formatVES(
+                              isVES ? expense.amount : expense.amount * liveBcvRate
+                            )}
                           </span>
-                          <span className={!isVES ? "text-sm font-bold text-gray-900" : "text-xs text-gray-400 font-medium"}>
-                            $ {formatUSD(!isVES ? expense.amount : expense.amount / liveBcvRate)}
+                          <span
+                            className={
+                              !isVES
+                                ? "text-sm font-bold text-gray-900"
+                                : "text-xs text-gray-400 font-medium"
+                            }
+                          >
+                            ${" "}
+                            {formatUSD(
+                              !isVES ? expense.amount : expense.amount / liveBcvRate
+                            )}
                           </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
-                          <button 
+                          <button
                             onClick={() => {
                               setExpenseToEdit(expense);
                               setIsModalOpen(true);
                             }}
-                            className="text-gray-400 hover:text-purple-600 transition-colors p-1.5 rounded-lg hover:bg-purple-50"
+                            className="text-gray-400 hover:text-purple-600 transition-colors p-1.5 rounded-lg hover:bg-purple-50 cursor-pointer"
                             title="Editar"
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
-                          <button 
+                          <button
                             onClick={() => handleDeleteExpense(expense.id)}
-                            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 rounded-lg hover:bg-red-50"
+                            className="text-gray-400 hover:text-red-600 transition-colors p-1.5 rounded-lg hover:bg-red-50 cursor-pointer"
                             title="Borrar"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -559,14 +827,26 @@ export default function ExpensesClient({
         {/* Table Footer / Pagination */}
         <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 px-6 py-4">
           <p className="text-xs font-semibold text-gray-500">
-            Mostrando <span className="text-gray-800 font-bold">{filteredAndSortedExpenses.length}</span> de <span className="text-gray-800 font-bold">{expenses.length}</span> resultados
+            Mostrando{" "}
+            <span className="text-gray-800 font-bold">
+              {filteredAndSortedExpenses.length}
+            </span>{" "}
+            de{" "}
+            <span className="text-gray-800 font-bold">{expenses.length}</span>{" "}
+            gastos en esta semana
           </p>
           <div className="flex gap-2">
-            <button className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-400 cursor-not-allowed">
-              Anterior
+            <button
+              onClick={handlePrevWeek}
+              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer"
+            >
+              Semana anterior
             </button>
-            <button className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 transition-colors">
-              Siguiente
+            <button
+              onClick={handleNextWeek}
+              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer"
+            >
+              Semana siguiente
             </button>
           </div>
         </div>
@@ -581,6 +861,7 @@ export default function ExpensesClient({
         }}
         categories={categories}
         onSubmit={handleCreateOrUpdateExpense}
+        defaultDate={isCurrentWeek ? undefined : currentWeekStart}
         initialData={
           expenseToEdit
             ? {
@@ -601,12 +882,18 @@ export default function ExpensesClient({
         onClose={() => setIsImportModalOpen(false)}
         onSuccess={handleImportSuccess}
       />
-      
+
       {/* Styles for slide down and fade in animations */}
       <style jsx global>{`
         @keyframes slideDown {
-          from { opacity: 0; transform: translateY(-8px); }
-          to { opacity: 1; transform: translateY(0); }
+          from {
+            opacity: 0;
+            transform: translateY(-8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
         }
         .animate-slide-down {
           animation: slideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
